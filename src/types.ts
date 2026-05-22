@@ -159,3 +159,107 @@ export interface DocumentMapObject {
   blocks: string[];
   frontmatterFields: string[];
 }
+
+// --- Graph types ---
+
+export interface GraphNode {
+  path: string;
+  name: string;
+  tags: string[];
+  linkCount: number;
+  backlinkCount: number;
+}
+
+export interface GraphEdge {
+  source: string;
+  target: string;
+}
+
+export interface GraphData {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+}
+
+export interface GraphAnalysis {
+  totalNodes: number;
+  totalEdges: number;
+  orphans: string[];
+  hubs: Array<{ path: string; degree: number }>;
+  connectedComponents: string[][];
+}
+
+export interface GraphNeighborNode extends GraphNode {
+  depth: number;
+}
+
+export interface GraphNeighborData {
+  root: string;
+  maxDepth: number;
+  nodes: GraphNeighborNode[];
+  edges: GraphEdge[];
+}
+
+// --- Link types ---
+
+export interface LinkInfo {
+  target: string;
+  displayText?: string;
+  line: number;
+  ch: number;
+  context: string;
+  direction: "outgoing" | "incoming";
+}
+
+export interface LinkSuggestion {
+  notePath: string;
+  noteName: string;
+  mentions: Array<{ line: number; context: string }>;
+}
+
+// --- Block types ---
+
+export interface BlockInfo {
+  id: string;
+  content: string;
+  line: number;
+}
+
+// --- Canvas types (JSON Canvas spec 1.0) ---
+
+export interface CanvasNode {
+  id: string;
+  type: "text" | "file" | "link" | "group";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  color?: string;
+  // text node
+  text?: string;
+  // file node
+  file?: string;
+  subpath?: string;
+  // link node
+  url?: string;
+  // group node
+  label?: string;
+  background?: string;
+  backgroundStyle?: "cover" | "ratio" | "repeat";
+}
+
+export interface CanvasEdge {
+  id: string;
+  fromNode: string;
+  fromSide?: "top" | "right" | "bottom" | "left";
+  fromEnd?: "none" | "arrow";
+  toNode: string;
+  toSide?: "top" | "right" | "bottom" | "left";
+  toEnd?: "none" | "arrow";
+  color?: string;
+  label?: string;
+}
+
+export interface CanvasData {
+  nodes: CanvasNode[];
+  edges: CanvasEdge[];
+}

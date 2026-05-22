@@ -10,7 +10,7 @@ import { VaultOperations } from "./vaultOperations";
 import { PatchFailed, PatchOperation, PatchTargetType } from "markdown-patch";
 import openapiYaml from "../docs/openapi.yaml";
 import { ERROR_CODE_MESSAGES } from "./constants";
-import { LocalRestApiSettings } from "./types";
+import { CanvasData, LocalRestApiSettings } from "./types";
 
 const PERIODS = ["daily", "weekly", "monthly", "quarterly", "yearly"] as const;
 
@@ -505,6 +505,387 @@ export class McpHandler {
       },
       async ({ path, newLeaf }: { path: string; newLeaf?: boolean }) => {
         this.ops.openVaultFile(path, newLeaf);
+        return this.text({ message: "OK" });
+      },
+    );
+
+    // --- Graph tools ---
+
+    this.tool(
+      "graph_get",
+      "Return the full graph structure of the vault as nodes and edges. " +
+        "Each node includes path, name, tags, link count, and backlink count. " +
+        "Each edge represents a wiki-link from source to target. " +
+        "Use the optional filter parameter to limit results to paths containing the filter string.",
+      {
+        filter: z.string().optional().describe("Optional path filter string (case-insensitive substring match)"),
+      },
+      async ({ filter }: { filter?: string }) => {
+        return this.text(this.ops.getGraph(filter));
+      },
+    );
+
+    this.tool(
+      "graph_analyze",
+      "Analyze the vault graph structure and return computed metrics: " +
+        "total node/edge counts, orphan notes (no links in or out), " +
+        "hub notes (highest degree), and connected components. " +
+        "Useful for understanding vault structure and finding isolated or central notes.",
+      {
+        topN: z.number().optional().describe("Number of top hubs to return (default: 10)"),
+      },
+      async ({ topN }: { topN?: number }) => {
+        return this.text(this.ops.analyzeGraph(topN));
+      },
+    );
+
+    this.tool(
+      "graph_neighbors",
+      "Return the local graph neighborhood of a specific note. " +
+        "Returns all notes within N link-hops of the specified note, " +
+        "similar to Obsidian's local graph view. " +
+        "Each node includes a depth field indicating distance from the root.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+        depth: z.number().optional().describe("Maximum link-hop depth to traverse (default: 1)"),
+      },
+      async ({ path, depth }: { path: string; depth?: number }) => {
+        return this.text(this.ops.getNeighbors(path, depth));
+      },
+    );
+
+    // --- Link tools ---
+
+    this.tool(
+      "link_list",
+      "List all outgoing and incoming wiki-links for a note. " +
+        "Each link includes target path, display text, line number, character position, " +
+        "surrounding context text, and direction (outgoing/incoming).",
+      {
+        path: z.string().describe("File path relative to vault root"),
+      },
+      async ({ path }: { path: string }) => {
+        return this.text(await this.ops.listLinks(path));
+      },
+    );
+
+    this.tool(
+      "link_create",
+      "Insert a wiki-link into a note. Creates a [[target]] or [[target|display]] link. " +
+        "Can optionally target a specific heading with [[target#heading]]. " +
+        "Position can be a specific line/character, 'end' to append, or omitted to append.",
+      {
+        path: z.string().describe("File path of the note to add the link to"),
+        target: z.string().describe("Target note name or path for the wiki-link"),
+        displayText: z.string().optional().describe("Optional display text for the link (e.g. [[target|display]])"),
+        heading: z.string().optional().describe("Optional heading to link to (e.g. [[target#heading]])"),
+        position: z.union([
+          z.object({
+            line: z.number().describe("0-indexed line number"),
+            ch: z.number().optional().describe("Character position within the line"),
+          }),
+          z.literal("end"),
+        ]).optional().describe("Where to insert the link: {line, ch}, 'end', or omit to append"),
+      },
+      async ({ path, target, displayText, heading, position }: {
+        path: string;
+        target: string;
+        displayText?: string;
+        heading?: string;
+        position?: { line: number; ch?: number } | "end";
+      }) => {
+        await this.ops.createLink(path, target, displayText, heading, position);
+        return this.text({ message: "OK" });
+      },
+    );
+
+    this.tool(
+      "link_delete",
+      "Remove a wiki-link from a note. Matches [[target]], [[target|display]], " +
+        "[[target#heading]], and [[target#heading|display]] patterns. " +
+        "Optionally restrict deletion to a specific line number.",
+      {
+        path: z.string().describe("File path of the note to remove the link from"),
+        target: z.string().describe("Target note name to match in the wiki-link"),
+        line: z.number().optional().describe("Optional 0-indexed line number to restrict deletion to"),
+      },
+      async ({ path, target, line }: { path: string; target: string; line?: number }) => {
+        const found = await this.ops.deleteLink(path, target, line);
+        return this.text({ deleted: found });
+      },
+    );
+
+    this.tool(
+      "link_suggest",
+      "Analyze a note's content and suggest potential wiki-links to existing notes. " +
+        "Finds unlinked mentions — places where another note's name appears in the text " +
+        "but is not already wrapped in a [[wiki-link]]. " +
+        "Useful for enriching vault connectivity.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+      },
+      async ({ path }: { path: string }) => {
+        return this.text(await this.ops.suggestLinksAsync(path));
+      },
+    );
+
+    // --- Block tools ---
+
+    this.tool(
+      "block_list",
+      "List all block references (^block-id) in a file. " +
+        "Returns each block's ID, content (the paragraph containing the block ref), " +
+        "and line number.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+      },
+      async ({ path }: { path: string }) => {
+        return this.text(await this.ops.listBlocks(path));
+      },
+    );
+
+    this.tool(
+      "block_create",
+      "Add a block reference ID (^block-id) to a specific line in a note. " +
+        "The block ID is appended to the end of the specified line. " +
+        "Throws if the block ID already exists in the file.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+        line: z.number().describe("0-indexed line number to add the block ID to"),
+        blockId: z.string().describe("Block reference ID (alphanumeric and hyphens, no ^ prefix)"),
+      },
+      async ({ path, line, blockId }: { path: string; line: number; blockId: string }) => {
+        await this.ops.createBlock(path, line, blockId);
+        return this.text({ message: "OK" });
+      },
+    );
+
+    this.tool(
+      "block_read",
+      "Read the content of a specific block reference in a file. " +
+        "Returns the block ID, its content (the full paragraph), and line number.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+        blockId: z.string().describe("Block reference ID to read (without ^ prefix)"),
+      },
+      async ({ path, blockId }: { path: string; blockId: string }) => {
+        return this.text(await this.ops.readBlock(path, blockId));
+      },
+    );
+
+    this.tool(
+      "transclusion_create",
+      "Insert a transclusion (embed) into a note. " +
+        "Creates either ![[note#^block]] for block transclusions " +
+        "or ![[note#heading]] for heading transclusions. " +
+        "Position can be a line number, 'end', or omitted to append.",
+      {
+        path: z.string().describe("File path of the note to add the transclusion to"),
+        targetNote: z.string().describe("Target note name or path to transclude from"),
+        targetRef: z.string().describe("Block ID (without ^) or heading text to transclude"),
+        refType: z.enum(["block", "heading"]).describe("Type of reference: 'block' for ^block-id, 'heading' for heading text"),
+        position: z.union([
+          z.object({ line: z.number().describe("0-indexed line number") }),
+          z.literal("end"),
+        ]).optional().describe("Where to insert: {line}, 'end', or omit to append"),
+      },
+      async ({ path, targetNote, targetRef, refType, position }: {
+        path: string;
+        targetNote: string;
+        targetRef: string;
+        refType: "block" | "heading";
+        position?: { line: number } | "end";
+      }) => {
+        await this.ops.createTransclusion(path, targetNote, targetRef, refType, position);
+        return this.text({ message: "OK" });
+      },
+    );
+
+    // --- Canvas tools ---
+
+    this.tool(
+      "canvas_list",
+      "List all .canvas files in the vault. Returns an array of file paths.",
+      {},
+      async () => {
+        return this.text({ files: this.ops.listCanvasFiles() });
+      },
+    );
+
+    this.tool(
+      "canvas_read",
+      "Read and parse a canvas file. Returns the full JSON Canvas structure " +
+        "with nodes (text, file, link, group) and edges between them. " +
+        "Follows the JSON Canvas spec 1.0.",
+      {
+        path: z.string().describe("Path to the .canvas file relative to vault root"),
+      },
+      async ({ path }: { path: string }) => {
+        return this.text(await this.ops.readCanvas(path));
+      },
+    );
+
+    this.tool(
+      "canvas_create",
+      "Create a new canvas file with initial nodes and edges. " +
+        "The path must end with .canvas extension. " +
+        "Nodes can be text, file, link, or group types per JSON Canvas spec 1.0.",
+      {
+        path: z.string().describe("Path for the new .canvas file (must end with .canvas)"),
+        nodes: z.array(z.object({
+          id: z.string(),
+          type: z.enum(["text", "file", "link", "group"]),
+          x: z.number(),
+          y: z.number(),
+          width: z.number(),
+          height: z.number(),
+          color: z.string().optional(),
+          text: z.string().optional(),
+          file: z.string().optional(),
+          subpath: z.string().optional(),
+          url: z.string().optional(),
+          label: z.string().optional(),
+          background: z.string().optional(),
+          backgroundStyle: z.enum(["cover", "ratio", "repeat"]).optional(),
+        })).optional().describe("Initial nodes to place on the canvas"),
+        edges: z.array(z.object({
+          id: z.string(),
+          fromNode: z.string(),
+          fromSide: z.enum(["top", "right", "bottom", "left"]).optional(),
+          fromEnd: z.enum(["none", "arrow"]).optional(),
+          toNode: z.string(),
+          toSide: z.enum(["top", "right", "bottom", "left"]).optional(),
+          toEnd: z.enum(["none", "arrow"]).optional(),
+          color: z.string().optional(),
+          label: z.string().optional(),
+        })).optional().describe("Initial edges connecting nodes"),
+      },
+      async ({ path, nodes, edges }: {
+        path: string;
+        nodes?: Array<Record<string, unknown>>;
+        edges?: Array<Record<string, unknown>>;
+      }) => {
+        await this.ops.createCanvas(path, {
+          nodes: (nodes ?? []) as unknown as CanvasData["nodes"],
+          edges: (edges ?? []) as unknown as CanvasData["edges"],
+        });
+        return this.text({ message: "OK" });
+      },
+    );
+
+    this.tool(
+      "canvas_add_node",
+      "Add a node to an existing canvas. Node types: " +
+        "'text' (with text content), 'file' (referencing a vault file), " +
+        "'link' (external URL), 'group' (visual container). " +
+        "Throws if a node with the same ID already exists.",
+      {
+        path: z.string().describe("Path to the .canvas file"),
+        node: z.object({
+          id: z.string(),
+          type: z.enum(["text", "file", "link", "group"]),
+          x: z.number(),
+          y: z.number(),
+          width: z.number(),
+          height: z.number(),
+          color: z.string().optional(),
+          text: z.string().optional(),
+          file: z.string().optional(),
+          subpath: z.string().optional(),
+          url: z.string().optional(),
+          label: z.string().optional(),
+          background: z.string().optional(),
+          backgroundStyle: z.enum(["cover", "ratio", "repeat"]).optional(),
+        }).describe("The node to add"),
+      },
+      async ({ path, node }: { path: string; node: Record<string, unknown> }) => {
+        const result = await this.ops.addCanvasNode(path, node as unknown as CanvasData["nodes"][0]);
+        return this.text(result);
+      },
+    );
+
+    this.tool(
+      "canvas_add_edge",
+      "Add an edge between two nodes on a canvas. " +
+        "Edges connect a fromNode to a toNode, optionally specifying sides and arrow endpoints. " +
+        "Throws if the edge ID already exists or if source/target nodes are not found.",
+      {
+        path: z.string().describe("Path to the .canvas file"),
+        edge: z.object({
+          id: z.string(),
+          fromNode: z.string(),
+          fromSide: z.enum(["top", "right", "bottom", "left"]).optional(),
+          fromEnd: z.enum(["none", "arrow"]).optional(),
+          toNode: z.string(),
+          toSide: z.enum(["top", "right", "bottom", "left"]).optional(),
+          toEnd: z.enum(["none", "arrow"]).optional(),
+          color: z.string().optional(),
+          label: z.string().optional(),
+        }).describe("The edge to add"),
+      },
+      async ({ path, edge }: { path: string; edge: Record<string, unknown> }) => {
+        const result = await this.ops.addCanvasEdge(path, edge as unknown as CanvasData["edges"][0]);
+        return this.text(result);
+      },
+    );
+
+    this.tool(
+      "canvas_delete_node",
+      "Remove a node from a canvas by its ID. " +
+        "Also removes all edges connected to the deleted node.",
+      {
+        path: z.string().describe("Path to the .canvas file"),
+        nodeId: z.string().describe("ID of the node to delete"),
+      },
+      async ({ path, nodeId }: { path: string; nodeId: string }) => {
+        const result = await this.ops.deleteCanvasNode(path, nodeId);
+        return this.text(result);
+      },
+    );
+
+    this.tool(
+      "canvas_update",
+      "Replace the entire content of a canvas file with new nodes and edges. " +
+        "Use this for bulk updates or restructuring a canvas.",
+      {
+        path: z.string().describe("Path to the .canvas file"),
+        nodes: z.array(z.object({
+          id: z.string(),
+          type: z.enum(["text", "file", "link", "group"]),
+          x: z.number(),
+          y: z.number(),
+          width: z.number(),
+          height: z.number(),
+          color: z.string().optional(),
+          text: z.string().optional(),
+          file: z.string().optional(),
+          subpath: z.string().optional(),
+          url: z.string().optional(),
+          label: z.string().optional(),
+          background: z.string().optional(),
+          backgroundStyle: z.enum(["cover", "ratio", "repeat"]).optional(),
+        })).describe("Complete list of nodes"),
+        edges: z.array(z.object({
+          id: z.string(),
+          fromNode: z.string(),
+          fromSide: z.enum(["top", "right", "bottom", "left"]).optional(),
+          fromEnd: z.enum(["none", "arrow"]).optional(),
+          toNode: z.string(),
+          toSide: z.enum(["top", "right", "bottom", "left"]).optional(),
+          toEnd: z.enum(["none", "arrow"]).optional(),
+          color: z.string().optional(),
+          label: z.string().optional(),
+        })).describe("Complete list of edges"),
+      },
+      async ({ path, nodes, edges }: {
+        path: string;
+        nodes: Array<Record<string, unknown>>;
+        edges: Array<Record<string, unknown>>;
+      }) => {
+        await this.ops.updateCanvas(path, {
+          nodes: nodes as unknown as CanvasData["nodes"],
+          edges: edges as unknown as CanvasData["edges"],
+        });
         return this.text({ message: "OK" });
       },
     );

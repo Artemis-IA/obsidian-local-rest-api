@@ -20,6 +20,7 @@ import {
 import { SUPPORTED_PROTOCOL_VERSIONS } from "@modelcontextprotocol/sdk/types.js";
 
 import {
+  CanvasData,
   CannedResponse,
   DocumentMapObject,
   ErrorCode,
@@ -1289,6 +1290,257 @@ export default class RequestHandler {
     res.status(200).send(openapiYaml);
   }
 
+  // --- Graph route handlers ---
+
+  async graphGet(req: express.Request, res: express.Response): Promise<void> {
+    const filter = req.query.filter as string | undefined;
+    res.json(this.operations.getGraph(filter));
+  }
+
+  async graphAnalyze(req: express.Request, res: express.Response): Promise<void> {
+    const topN = req.query.topN ? Number(req.query.topN) : undefined;
+    res.json(this.operations.analyzeGraph(topN));
+  }
+
+  async graphNeighbors(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    const depth = req.query.depth ? Number(req.query.depth) : undefined;
+    try {
+      res.json(this.operations.getNeighbors(filePath, depth));
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  // --- Link route handlers ---
+
+  async linkList(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    try {
+      res.json(await this.operations.listLinks(filePath));
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async linkCreate(req: express.Request, res: express.Response): Promise<void> {
+    const { path, target, displayText, heading, position } = req.body as {
+      path: string;
+      target: string;
+      displayText?: string;
+      heading?: string;
+      position?: { line: number; ch?: number } | "end";
+    };
+    if (!path || !target) {
+      this.returnCannedResponse(res, { statusCode: 400, message: "path and target are required" });
+      return;
+    }
+    try {
+      await this.operations.createLink(path, target, displayText, heading, position);
+      res.json({ message: "OK" });
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async linkDelete(req: express.Request, res: express.Response): Promise<void> {
+    const { path, target, line } = req.body as {
+      path: string;
+      target: string;
+      line?: number;
+    };
+    if (!path || !target) {
+      this.returnCannedResponse(res, { statusCode: 400, message: "path and target are required" });
+      return;
+    }
+    try {
+      const deleted = await this.operations.deleteLink(path, target, line);
+      res.json({ deleted });
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async linkSuggest(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    try {
+      res.json(await this.operations.suggestLinksAsync(filePath));
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  // --- Block route handlers ---
+
+  async blockList(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    try {
+      res.json(await this.operations.listBlocks(filePath));
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async blockCreate(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    const { line, blockId } = req.body as { line: number; blockId: string };
+    if (line === undefined || !blockId) {
+      this.returnCannedResponse(res, { statusCode: 400, message: "line and blockId are required" });
+      return;
+    }
+    try {
+      await this.operations.createBlock(filePath, line, blockId);
+      res.json({ message: "OK" });
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async blockRead(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params.filePath);
+    const blockId = decodeURIComponent(req.params.blockId);
+    try {
+      const block = await this.operations.readBlock(filePath, blockId);
+      if (!block) {
+        this.returnCannedResponse(res, { statusCode: 404, message: `Block ^${blockId} not found` });
+        return;
+      }
+      res.json(block);
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async transclusionCreate(req: express.Request, res: express.Response): Promise<void> {
+    const { path, targetNote, targetRef, refType, position } = req.body as {
+      path: string;
+      targetNote: string;
+      targetRef: string;
+      refType: "block" | "heading";
+      position?: { line: number } | "end";
+    };
+    if (!path || !targetNote || !targetRef || !refType) {
+      this.returnCannedResponse(res, { statusCode: 400, message: "path, targetNote, targetRef, and refType are required" });
+      return;
+    }
+    try {
+      await this.operations.createTransclusion(path, targetNote, targetRef, refType, position);
+      res.json({ message: "OK" });
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  // --- Canvas route handlers ---
+
+  async canvasList(_req: express.Request, res: express.Response): Promise<void> {
+    res.json({ files: this.operations.listCanvasFiles() });
+  }
+
+  async canvasRead(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    try {
+      res.json(await this.operations.readCanvas(filePath));
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async canvasCreate(req: express.Request, res: express.Response): Promise<void> {
+    const { path, nodes, edges } = req.body as {
+      path: string;
+      nodes?: unknown[];
+      edges?: unknown[];
+    };
+    if (!path) {
+      this.returnCannedResponse(res, { statusCode: 400, message: "path is required" });
+      return;
+    }
+    await this.operations.createCanvas(path, {
+      nodes: (nodes ?? []) as CanvasData["nodes"],
+      edges: (edges ?? []) as CanvasData["edges"],
+    });
+    res.status(201).json({ message: "OK" });
+  }
+
+  async canvasAddNode(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    const node = req.body as Record<string, unknown>;
+    try {
+      const result = await this.operations.addCanvasNode(filePath, node as unknown as CanvasData["nodes"][0]);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async canvasAddEdge(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    const edge = req.body as Record<string, unknown>;
+    try {
+      const result = await this.operations.addCanvasEdge(filePath, edge as unknown as CanvasData["edges"][0]);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async canvasDeleteNode(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    const nodeId = decodeURIComponent(req.params.nodeId);
+    try {
+      const result = await this.operations.deleteCanvasNode(filePath, nodeId);
+      res.json(result);
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
+  async canvasUpdate(req: express.Request, res: express.Response): Promise<void> {
+    const filePath = decodeURIComponent(req.params[0]);
+    const { nodes, edges } = req.body as {
+      nodes: unknown[];
+      edges: unknown[];
+    };
+    try {
+      await this.operations.updateCanvas(filePath, {
+        nodes: nodes as CanvasData["nodes"],
+        edges: edges as CanvasData["edges"],
+      });
+      res.json({ message: "OK" });
+    } catch (e) {
+      if (e instanceof FileNotFoundError) {
+        this.returnCannedResponse(res, { statusCode: 404 });
+      } else { throw e; }
+    }
+  }
+
   async notFoundHandler(
     _req: express.Request,
     res: express.Response,
@@ -1438,6 +1690,34 @@ export default class RequestHandler {
     this.api.route("/search/simple/").post(this.handle((rq, rs) => this.searchSimplePost(rq, rs)));
 
     this.api.route("/open/*").post(this.handle((rq, rs) => this.openPost(rq, rs)));
+
+    // Graph routes
+    this.api.route("/graph/").get(this.handle((rq, rs) => this.graphGet(rq, rs)));
+    this.api.route("/graph/analyze/").get(this.handle((rq, rs) => this.graphAnalyze(rq, rs)));
+    this.api.route("/graph/neighbors/*").get(this.handle((rq, rs) => this.graphNeighbors(rq, rs)));
+
+    // Link routes
+    this.api.route("/links/*").get(this.handle((rq, rs) => this.linkList(rq, rs)));
+    this.api.route("/links/").post(this.handle((rq, rs) => this.linkCreate(rq, rs)));
+    this.api.route("/links/").delete(this.handle((rq, rs) => this.linkDelete(rq, rs)));
+    this.api.route("/links/suggest/*").get(this.handle((rq, rs) => this.linkSuggest(rq, rs)));
+
+    // Block routes
+    this.api.route("/blocks/*").get(this.handle((rq, rs) => this.blockList(rq, rs)));
+    this.api.route("/blocks/*").post(this.handle((rq, rs) => this.blockCreate(rq, rs)));
+    this.api.route("/blocks/:filePath/:blockId").get(this.handle((rq, rs) => this.blockRead(rq, rs)));
+
+    // Transclusion routes
+    this.api.route("/transclusions/").post(this.handle((rq, rs) => this.transclusionCreate(rq, rs)));
+
+    // Canvas routes
+    this.api.route("/canvas/").get(this.handle((rq, rs) => this.canvasList(rq, rs)));
+    this.api.route("/canvas/").post(this.handle((rq, rs) => this.canvasCreate(rq, rs)));
+    this.api.route("/canvas/*").get(this.handle((rq, rs) => this.canvasRead(rq, rs)));
+    this.api.route("/canvas/*/nodes").post(this.handle((rq, rs) => this.canvasAddNode(rq, rs)));
+    this.api.route("/canvas/*/edges").post(this.handle((rq, rs) => this.canvasAddEdge(rq, rs)));
+    this.api.route("/canvas/*/nodes/:nodeId").delete(this.handle((rq, rs) => this.canvasDeleteNode(rq, rs)));
+    this.api.route("/canvas/*").put(this.handle((rq, rs) => this.canvasUpdate(rq, rs)));
 
     this.api.get(`/${CERT_NAME}`, this.handle((rq, rs) => this.certificateGet(rq, rs)));
     this.api.get("/openapi.yaml", this.handle((rq, rs) => this.openapiYamlGet(rq, rs)));

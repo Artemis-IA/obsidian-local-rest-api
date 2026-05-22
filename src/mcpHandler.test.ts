@@ -153,8 +153,8 @@ describe("McpHandler", () => {
 
   // ---- tool registration --------------------------------------------------
 
-  test("registers all 15 tools", () => {
-    expect(mockTool).toHaveBeenCalledTimes(15);
+  test("registers all 33 tools", () => {
+    expect(mockTool).toHaveBeenCalledTimes(33);
     const names = mockTool.mock.calls.map((c: unknown[]) => c[0]);
     expect(names).toEqual(
       expect.arrayContaining([
@@ -173,6 +173,24 @@ describe("McpHandler", () => {
         "command_list",
         "command_execute",
         "open_file",
+        "graph_get",
+        "graph_analyze",
+        "graph_neighbors",
+        "link_list",
+        "link_create",
+        "link_delete",
+        "link_suggest",
+        "block_list",
+        "block_create",
+        "block_read",
+        "transclusion_create",
+        "canvas_list",
+        "canvas_read",
+        "canvas_create",
+        "canvas_add_node",
+        "canvas_add_edge",
+        "canvas_delete_node",
+        "canvas_update",
       ]),
     );
   });

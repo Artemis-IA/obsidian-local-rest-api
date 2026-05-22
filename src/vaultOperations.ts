@@ -27,9 +27,19 @@ export class FileNotFoundError extends Error {}
 export class CommandNotFoundError extends Error {}
 
 import {
+  BlockInfo,
+  CanvasData,
   DocumentMapObject,
   ErrorCode,
   FileMetadataObject,
+  GraphAnalysis,
+  GraphData,
+  GraphEdge,
+  GraphNeighborData,
+  GraphNeighborNode,
+  GraphNode,
+  LinkInfo,
+  LinkSuggestion,
   PeriodicNoteInterface,
   SearchContext,
   SearchJsonResponseItem,
@@ -589,5 +599,534 @@ export class VaultOperations {
 
   openVaultFile(filePath: string, newLeaf = false): void {
     void this.app.workspace.openLinkText(filePath, "/", newLeaf);
+  }
+
+  // --- Graph operations ---
+
+  getGraph(filter?: string): GraphData {
+    const files = this.app.vault.getMarkdownFiles();
+    const resolvedLinks = this.app.metadataCache.resolvedLinks;
+    const backlinksIndex = this.buildBacklinksIndex();
+    const edgeSet = new Set<string>();
+    const edges: GraphEdge[] = [];
+    const nodes: GraphNode[] = [];
+
+    for (const file of files) {
+      if (filter && !file.path.toLowerCase().includes(filter.toLowerCase())) {
+        continue;
+      }
+
+      const cache = this.app.metadataCache.getFileCache(file);
+      const fileTags = cache ? (getAllTags(cache) ?? []) : [];
+      const tags = fileTags
+        .map((t: string) => (t.startsWith("#") ? t.slice(1) : t))
+        .filter((value: string, index: number, self: string[]) => self.indexOf(value) === index);
+
+      const outgoing = Object.keys(resolvedLinks[file.path] ?? {});
+      const incoming = backlinksIndex[file.path] ?? [];
+
+      nodes.push({
+        path: file.path,
+        name: file.basename,
+        tags,
+        linkCount: outgoing.length,
+        backlinkCount: incoming.length,
+      });
+
+      for (const target of outgoing) {
+        const key = `${file.path}->${target}`;
+        if (!edgeSet.has(key)) {
+          edgeSet.add(key);
+          edges.push({ source: file.path, target });
+        }
+      }
+    }
+
+    return { nodes, edges };
+  }
+
+  analyzeGraph(topN = 10): GraphAnalysis {
+    const graph = this.getGraph();
+    const degree: Record<string, number> = {};
+
+    for (const node of graph.nodes) {
+      degree[node.path] = (degree[node.path] ?? 0);
+    }
+    for (const edge of graph.edges) {
+      degree[edge.source] = (degree[edge.source] ?? 0) + 1;
+      degree[edge.target] = (degree[edge.target] ?? 0) + 1;
+    }
+
+    const orphans = graph.nodes
+      .filter((n) => (degree[n.path] ?? 0) === 0)
+      .map((n) => n.path);
+
+    const hubs = Object.entries(degree)
+      .sort(([, a], [, b]) => b - a)
+      .slice(0, topN)
+      .map(([path, deg]) => ({ path, degree: deg }));
+
+    // Connected components via BFS
+    const adjacency: Record<string, Set<string>> = {};
+    for (const node of graph.nodes) {
+      adjacency[node.path] = new Set();
+    }
+    for (const edge of graph.edges) {
+      if (adjacency[edge.source]) adjacency[edge.source].add(edge.target);
+      if (adjacency[edge.target]) adjacency[edge.target].add(edge.source);
+    }
+
+    const visited = new Set<string>();
+    const components: string[][] = [];
+
+    for (const node of graph.nodes) {
+      if (visited.has(node.path)) continue;
+      const component: string[] = [];
+      const queue = [node.path];
+      while (queue.length > 0) {
+        const current = queue.shift()!;
+        if (visited.has(current)) continue;
+        visited.add(current);
+        component.push(current);
+        for (const neighbor of adjacency[current] ?? []) {
+          if (!visited.has(neighbor)) queue.push(neighbor);
+        }
+      }
+      components.push(component);
+    }
+
+    return {
+      totalNodes: graph.nodes.length,
+      totalEdges: graph.edges.length,
+      orphans,
+      hubs,
+      connectedComponents: components,
+    };
+  }
+
+  getNeighbors(rootPath: string, maxDepth = 1): GraphNeighborData {
+    const resolvedLinks = this.app.metadataCache.resolvedLinks;
+    const backlinksIndex = this.buildBacklinksIndex();
+    const visited = new Map<string, number>();
+    const edges: GraphEdge[] = [];
+    const edgeSet = new Set<string>();
+    const queue: Array<{ path: string; depth: number }> = [{ path: rootPath, depth: 0 }];
+
+    visited.set(rootPath, 0);
+
+    while (queue.length > 0) {
+      const { path: current, depth } = queue.shift()!;
+      if (depth >= maxDepth) continue;
+
+      const outgoing = Object.keys(resolvedLinks[current] ?? {});
+      const incoming = backlinksIndex[current] ?? [];
+      const neighbors = [...new Set([...outgoing, ...incoming])];
+
+      for (const neighbor of neighbors) {
+        const edgeKey = outgoing.includes(neighbor)
+          ? `${current}->${neighbor}`
+          : `${neighbor}->${current}`;
+        if (!edgeSet.has(edgeKey)) {
+          edgeSet.add(edgeKey);
+          if (outgoing.includes(neighbor)) {
+            edges.push({ source: current, target: neighbor });
+          } else {
+            edges.push({ source: neighbor, target: current });
+          }
+        }
+
+        if (!visited.has(neighbor)) {
+          visited.set(neighbor, depth + 1);
+          queue.push({ path: neighbor, depth: depth + 1 });
+        }
+      }
+    }
+
+    const nodes: GraphNeighborNode[] = [];
+    for (const [nodePath, depth] of visited.entries()) {
+      const file = this.app.vault.getAbstractFileByPath(nodePath);
+      if (!(file instanceof TFile)) {
+        nodes.push({
+          path: nodePath,
+          name: nodePath.replace(/\.md$/, "").split("/").pop() ?? nodePath,
+          tags: [],
+          linkCount: 0,
+          backlinkCount: 0,
+          depth,
+        });
+        continue;
+      }
+      const cache = this.app.metadataCache.getFileCache(file);
+      const fileTags = cache ? (getAllTags(cache) ?? []) : [];
+      const tags = fileTags
+        .map((t: string) => (t.startsWith("#") ? t.slice(1) : t))
+        .filter((value: string, index: number, self: string[]) => self.indexOf(value) === index);
+
+      nodes.push({
+        path: nodePath,
+        name: file.basename,
+        tags,
+        linkCount: Object.keys(resolvedLinks[nodePath] ?? {}).length,
+        backlinkCount: (backlinksIndex[nodePath] ?? []).length,
+        depth,
+      });
+    }
+
+    return { root: rootPath, maxDepth, nodes, edges };
+  }
+
+  // --- Link operations ---
+
+  async listLinks(filePath: string): Promise<LinkInfo[]> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    const content = await this.app.vault.cachedRead(file);
+    const lines = content.split("\n");
+    const cache = this.app.metadataCache.getFileCache(file);
+    const links: LinkInfo[] = [];
+
+    // Outgoing links from cache
+    if (cache?.links) {
+      for (const link of cache.links) {
+        const line = link.position.start.line;
+        links.push({
+          target: link.link,
+          displayText: link.displayText,
+          line,
+          ch: link.position.start.col,
+          context: lines[line] ?? "",
+          direction: "outgoing",
+        });
+      }
+    }
+
+    // Incoming links (backlinks)
+    const backlinksIndex = this.buildBacklinksIndex();
+    const incoming = backlinksIndex[filePath] ?? [];
+    for (const sourcePath of incoming) {
+      const sourceFile = this.app.vault.getAbstractFileByPath(sourcePath);
+      if (!(sourceFile instanceof TFile)) continue;
+      const sourceCache = this.app.metadataCache.getFileCache(sourceFile);
+      const sourceContent = await this.app.vault.cachedRead(sourceFile);
+      const sourceLines = sourceContent.split("\n");
+      if (sourceCache?.links) {
+        for (const link of sourceCache.links) {
+          const resolved = this.app.metadataCache.resolvedLinks[sourcePath]?.[filePath];
+          if (resolved !== undefined && link.link.includes(file.basename.replace(/\.md$/, ""))) {
+            links.push({
+              target: sourcePath,
+              displayText: link.displayText,
+              line: link.position.start.line,
+              ch: link.position.start.col,
+              context: sourceLines[link.position.start.line] ?? "",
+              direction: "incoming",
+            });
+          }
+        }
+      }
+    }
+
+    return links;
+  }
+
+  async createLink(
+    filePath: string,
+    targetNote: string,
+    displayText?: string,
+    heading?: string,
+    position?: { line: number; ch?: number } | "end",
+  ): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    let linkText = `[[${targetNote}`;
+    if (heading) linkText += `#${heading}`;
+    if (displayText) linkText += `|${displayText}`;
+    linkText += "]]";
+
+    const content = await this.app.vault.read(file);
+    const lines = content.split("\n");
+
+    if (position === "end") {
+      const newContent = content.endsWith("\n")
+        ? content + linkText + "\n"
+        : content + "\n" + linkText + "\n";
+      await this.app.vault.adapter.write(filePath, newContent);
+    } else if (position) {
+      const lineIdx = Math.min(position.line, lines.length - 1);
+      const line = lines[lineIdx];
+      const ch = position.ch ?? line.length;
+      lines[lineIdx] = line.slice(0, ch) + linkText + line.slice(ch);
+      await this.app.vault.adapter.write(filePath, lines.join("\n"));
+    } else {
+      // Default: append to end
+      const newContent = content.endsWith("\n")
+        ? content + linkText + "\n"
+        : content + "\n" + linkText + "\n";
+      await this.app.vault.adapter.write(filePath, newContent);
+    }
+  }
+
+  async deleteLink(filePath: string, targetNote: string, line?: number): Promise<boolean> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    const content = await this.app.vault.read(file);
+    const lines = content.split("\n");
+    // Match [[target]], [[target|display]], [[target#heading]], [[target#heading|display]]
+    const escapedTarget = targetNote.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const linkPattern = new RegExp(
+      `\\[\\[${escapedTarget}(?:#[^\\]|]*)?(?:\\|[^\\]]*)?\\]\\]`,
+      "g",
+    );
+
+    let found = false;
+    if (line !== undefined) {
+      const lineIdx = Math.min(line, lines.length - 1);
+      if (linkPattern.test(lines[lineIdx])) {
+        lines[lineIdx] = lines[lineIdx].replace(linkPattern, "");
+        found = true;
+      }
+    } else {
+      for (let i = 0; i < lines.length; i++) {
+        if (linkPattern.test(lines[i])) {
+          lines[i] = lines[i].replace(linkPattern, "");
+          found = true;
+          break;
+        }
+      }
+    }
+
+    if (found) {
+      await this.app.vault.adapter.write(filePath, lines.join("\n"));
+    }
+    return found;
+  }
+
+  async suggestLinksAsync(filePath: string): Promise<LinkSuggestion[]> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    const content = await this.app.vault.cachedRead(file);
+    const lines = content.split("\n");
+    const suggestions: LinkSuggestion[] = [];
+    const allFiles = this.app.vault.getMarkdownFiles();
+    const resolvedOutgoing = Object.keys(
+      this.app.metadataCache.resolvedLinks[filePath] ?? {},
+    );
+
+    for (const otherFile of allFiles) {
+      if (otherFile.path === filePath) continue;
+      if (resolvedOutgoing.includes(otherFile.path)) continue;
+
+      const name = otherFile.basename;
+      if (name.length < 3) continue; // Skip very short names
+
+      const namePattern = new RegExp(
+        `(?<![\\[\\w])${name.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?![\\]\\w])`,
+        "gi",
+      );
+
+      const mentions: Array<{ line: number; context: string }> = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (namePattern.test(lines[i])) {
+          mentions.push({ line: i, context: lines[i] });
+        }
+      }
+
+      if (mentions.length > 0) {
+        suggestions.push({
+          notePath: otherFile.path,
+          noteName: name,
+          mentions,
+        });
+      }
+    }
+
+    return suggestions;
+  }
+
+  // --- Block operations ---
+
+  async listBlocks(filePath: string): Promise<BlockInfo[]> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    const content = await this.app.vault.cachedRead(file);
+    const lines = content.split("\n");
+    const blocks: BlockInfo[] = [];
+    const blockPattern = /\^([a-zA-Z0-9-]+)\s*$/;
+
+    for (let i = 0; i < lines.length; i++) {
+      const match = lines[i].match(blockPattern);
+      if (match) {
+        // Collect the block content (paragraph above the ^id)
+        let blockContent = lines[i];
+        let j = i - 1;
+        while (j >= 0 && lines[j].trim() !== "") {
+          blockContent = lines[j] + "\n" + blockContent;
+          j--;
+        }
+        blocks.push({
+          id: match[1],
+          content: blockContent.trim(),
+          line: i,
+        });
+      }
+    }
+
+    return blocks;
+  }
+
+  async createBlock(filePath: string, line: number, blockId: string): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    const content = await this.app.vault.read(file);
+    const lines = content.split("\n");
+    const lineIdx = Math.min(line, lines.length - 1);
+
+    // Check if block ID already exists
+    if (content.includes(`^${blockId}`)) {
+      throw new Error(`Block ID "${blockId}" already exists in ${filePath}`);
+    }
+
+    // Append ^blockId to the line
+    lines[lineIdx] = lines[lineIdx].trimEnd() + ` ^${blockId}`;
+    await this.app.vault.adapter.write(filePath, lines.join("\n"));
+  }
+
+  async readBlock(filePath: string, blockId: string): Promise<BlockInfo> {
+    const blocks = await this.listBlocks(filePath);
+    const block = blocks.find((b) => b.id === blockId);
+    if (!block) throw new Error(`Block "${blockId}" not found in ${filePath}`);
+    return block;
+  }
+
+  async createTransclusion(
+    filePath: string,
+    targetNote: string,
+    targetRef: string,
+    refType: "block" | "heading",
+    position?: { line: number } | "end",
+  ): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+
+    const separator = refType === "block" ? "#^" : "#";
+    const transclusion = `![[${targetNote}${separator}${targetRef}]]`;
+
+    const content = await this.app.vault.read(file);
+    const lines = content.split("\n");
+
+    if (position === "end" || !position) {
+      const newContent = content.endsWith("\n")
+        ? content + transclusion + "\n"
+        : content + "\n" + transclusion + "\n";
+      await this.app.vault.adapter.write(filePath, newContent);
+    } else {
+      const lineIdx = Math.min(position.line, lines.length);
+      lines.splice(lineIdx, 0, transclusion);
+      await this.app.vault.adapter.write(filePath, lines.join("\n"));
+    }
+  }
+
+  // --- Canvas operations (JSON Canvas spec 1.0) ---
+
+  listCanvasFiles(): string[] {
+    return this.app.vault
+      .getFiles()
+      .filter((f) => f.extension === "canvas")
+      .map((f) => f.path)
+      .sort();
+  }
+
+  async readCanvas(filePath: string): Promise<CanvasData> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+    if (file.extension !== "canvas") throw new Error(`Not a canvas file: ${filePath}`);
+
+    const content = await this.app.vault.read(file);
+    const data = JSON.parse(content) as CanvasData;
+    return {
+      nodes: data.nodes ?? [],
+      edges: data.edges ?? [],
+    };
+  }
+
+  async createCanvas(filePath: string, data: CanvasData): Promise<void> {
+    if (!filePath.endsWith(".canvas")) {
+      throw new Error("Canvas files must have a .canvas extension");
+    }
+    try {
+      await this.app.vault.createFolder(path.dirname(filePath));
+    } catch {
+      // folder already exists
+    }
+    const content = JSON.stringify(
+      { nodes: data.nodes ?? [], edges: data.edges ?? [] },
+      null,
+      2,
+    );
+    await this.app.vault.adapter.write(filePath, content);
+  }
+
+  async addCanvasNode(
+    filePath: string,
+    node: CanvasData["nodes"][0],
+  ): Promise<CanvasData> {
+    const canvas = await this.readCanvas(filePath);
+    if (canvas.nodes.some((n) => n.id === node.id)) {
+      throw new Error(`Node with id "${node.id}" already exists`);
+    }
+    canvas.nodes.push(node);
+    await this.app.vault.adapter.write(filePath, JSON.stringify(canvas, null, 2));
+    return canvas;
+  }
+
+  async addCanvasEdge(
+    filePath: string,
+    edge: CanvasData["edges"][0],
+  ): Promise<CanvasData> {
+    const canvas = await this.readCanvas(filePath);
+    if (canvas.edges.some((e) => e.id === edge.id)) {
+      throw new Error(`Edge with id "${edge.id}" already exists`);
+    }
+    if (!canvas.nodes.some((n) => n.id === edge.fromNode)) {
+      throw new Error(`Source node "${edge.fromNode}" not found`);
+    }
+    if (!canvas.nodes.some((n) => n.id === edge.toNode)) {
+      throw new Error(`Target node "${edge.toNode}" not found`);
+    }
+    canvas.edges.push(edge);
+    await this.app.vault.adapter.write(filePath, JSON.stringify(canvas, null, 2));
+    return canvas;
+  }
+
+  async deleteCanvasNode(filePath: string, nodeId: string): Promise<CanvasData> {
+    const canvas = await this.readCanvas(filePath);
+    const idx = canvas.nodes.findIndex((n) => n.id === nodeId);
+    if (idx === -1) throw new Error(`Node "${nodeId}" not found`);
+    canvas.nodes.splice(idx, 1);
+    // Remove connected edges
+    canvas.edges = canvas.edges.filter(
+      (e) => e.fromNode !== nodeId && e.toNode !== nodeId,
+    );
+    await this.app.vault.adapter.write(filePath, JSON.stringify(canvas, null, 2));
+    return canvas;
+  }
+
+  async updateCanvas(filePath: string, data: CanvasData): Promise<void> {
+    const file = this.app.vault.getAbstractFileByPath(filePath);
+    if (!(file instanceof TFile)) throw new FileNotFoundError(`File not found: ${filePath}`);
+    if (file.extension !== "canvas") throw new Error(`Not a canvas file: ${filePath}`);
+
+    const content = JSON.stringify(
+      { nodes: data.nodes ?? [], edges: data.edges ?? [] },
+      null,
+      2,
+    );
+    await this.app.vault.adapter.write(filePath, content);
   }
 }
