@@ -92,6 +92,7 @@ export class McpHandler {
     if (!sessionId) {
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
+        enableJsonResponse: true,
         onsessioninitialized: (id) => {
           this.transports.set(id, transport);
         },

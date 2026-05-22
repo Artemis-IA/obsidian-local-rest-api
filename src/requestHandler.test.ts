@@ -1553,11 +1553,11 @@ describe("requestHandler", () => {
         .expect(200);
     });
 
-    test("POST /mcp/ with MCP-Protocol-Version 2025-03-26 passes through", async () => {
+    test("POST /mcp/ with MCP-Protocol-Version 2025-11-25 passes through", async () => {
       await request(server)
         .post("/mcp/")
         .set("Authorization", `Bearer ${API_KEY}`)
-        .set("MCP-Protocol-Version", "2025-03-26")
+        .set("MCP-Protocol-Version", "2025-11-25")
         .expect(200);
     });
 
