@@ -825,6 +825,440 @@ paths:
         Update the content of the active file open in Obsidian.
       tags:
         - "Active File"
+  "/blocks/{filename}":
+    get:
+      description: |
+        Returns each block's ID, content (the paragraph containing the block ref), and line number.
+      parameters:
+        - description: "File path relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  blocks:
+                    items:
+                      properties:
+                        content:
+                          type: "string"
+                        id:
+                          type: "string"
+                        line:
+                          type: "number"
+                      type: "object"
+                    type: "array"
+                type: "object"
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        List all block references in a file.
+      tags:
+        - "Blocks"
+    post:
+      description: |
+        The block ID is appended to the end of the specified line. Throws if the block ID already exists in the file.
+      parameters:
+        - description: "File path relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                blockId:
+                  description: "Block reference ID (alphanumeric and hyphens, no ^ prefix)."
+                  type: "string"
+                line:
+                  description: "0-indexed line number to add the block ID to."
+                  type: "number"
+              required:
+                - "line"
+                - "blockId"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Bad request"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        Add a block reference ID to a specific line in a note.
+      tags:
+        - "Blocks"
+  "/blocks/{filename}/{blockId}":
+    get:
+      description: |
+        Returns the block ID, its content (the full paragraph), and line number.
+      parameters:
+        - description: "File path relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+        - description: "Block reference ID to read (without ^ prefix)."
+          in: "path"
+          name: "blockId"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  content:
+                    type: "string"
+                  id:
+                    type: "string"
+                  line:
+                    type: "number"
+                type: "object"
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Block or file not found"
+      summary: |
+        Read the content of a specific block reference in a file.
+      tags:
+        - "Blocks"
+  /canvas/:
+    get:
+      description: |
+        Returns an array of file paths for all canvas files.
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  files:
+                    items:
+                      type: "string"
+                    type: "array"
+                type: "object"
+          description: "Success"
+      summary: |
+        List all .canvas files in the vault.
+      tags:
+        - "Canvas"
+    post:
+      description: |
+        Creates a new canvas file with initial nodes and edges. The path must end with .canvas extension. Follows JSON Canvas spec 1.0.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                edges:
+                  description: "Initial edges connecting nodes."
+                  items:
+                    type: "object"
+                  type: "array"
+                nodes:
+                  description: "Initial nodes to place on the canvas."
+                  items:
+                    type: "object"
+                  type: "array"
+                path:
+                  description: "Path for the new .canvas file."
+                  type: "string"
+              required:
+                - "path"
+              type: "object"
+        required: true
+      responses:
+        "201":
+          description: "Created"
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Bad request"
+      summary: |
+        Create a new canvas file.
+      tags:
+        - "Canvas"
+  "/canvas/{filename}":
+    get:
+      description: |
+        Returns the full JSON Canvas structure with nodes and edges. Follows JSON Canvas spec 1.0.
+      parameters:
+        - description: "Path to the .canvas file relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  edges:
+                    items:
+                      type: "object"
+                    type: "array"
+                  nodes:
+                    items:
+                      type: "object"
+                    type: "array"
+                type: "object"
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Canvas file not found"
+      summary: |
+        Read and parse a canvas file.
+      tags:
+        - "Canvas"
+    put:
+      description: |
+        Replaces all nodes and edges in an existing canvas file.
+      parameters:
+        - description: "Path to the .canvas file relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                edges:
+                  items:
+                    type: "object"
+                  type: "array"
+                nodes:
+                  items:
+                    type: "object"
+                  type: "array"
+              required:
+                - "nodes"
+                - "edges"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Canvas file not found"
+      summary: |
+        Replace the entire content of a canvas file.
+      tags:
+        - "Canvas"
+  "/canvas/{filename}/edges":
+    post:
+      description: |
+        Edges connect a fromNode to a toNode, optionally specifying sides and arrow endpoints.
+      parameters:
+        - description: "Path to the .canvas file."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                color:
+                  type: "string"
+                fromEnd:
+                  enum:
+                    - "none"
+                    - "arrow"
+                  type: "string"
+                fromNode:
+                  type: "string"
+                fromSide:
+                  enum:
+                    - "top"
+                    - "right"
+                    - "bottom"
+                    - "left"
+                  type: "string"
+                id:
+                  type: "string"
+                label:
+                  type: "string"
+                toEnd:
+                  enum:
+                    - "none"
+                    - "arrow"
+                  type: "string"
+                toNode:
+                  type: "string"
+                toSide:
+                  enum:
+                    - "top"
+                    - "right"
+                    - "bottom"
+                    - "left"
+                  type: "string"
+              required:
+                - "id"
+                - "fromNode"
+                - "toNode"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Canvas file not found"
+      summary: |
+        Add an edge between two nodes on a canvas.
+      tags:
+        - "Canvas"
+  "/canvas/{filename}/nodes":
+    post:
+      description: |
+        Node types: text (with text content), file (referencing a vault file), link (external URL), group (visual container). Throws if a node with the same ID already exists.
+      parameters:
+        - description: "Path to the .canvas file."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                color:
+                  type: "string"
+                file:
+                  type: "string"
+                height:
+                  type: "number"
+                id:
+                  type: "string"
+                label:
+                  type: "string"
+                text:
+                  type: "string"
+                type:
+                  enum:
+                    - "text"
+                    - "file"
+                    - "link"
+                    - "group"
+                  type: "string"
+                url:
+                  type: "string"
+                width:
+                  type: "number"
+                x:
+                  type: "number"
+                "y":
+                  type: "number"
+              required:
+                - "id"
+                - "type"
+                - "x"
+                - "y"
+                - "width"
+                - "height"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Canvas file not found"
+      summary: |
+        Add a node to an existing canvas.
+      tags:
+        - "Canvas"
+  "/canvas/{filename}/nodes/{nodeId}":
+    delete:
+      description: |
+        Also removes all edges connected to the deleted node.
+      parameters:
+        - description: "Path to the .canvas file."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+        - description: "ID of the node to delete."
+          in: "path"
+          name: "nodeId"
+          required: true
+          schema:
+            type: "string"
+      responses:
+        "200":
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Canvas file not found"
+      summary: |
+        Remove a node from a canvas by its ID.
+      tags:
+        - "Canvas"
   /commands/:
     get:
       responses:
@@ -876,6 +1310,342 @@ paths:
         Execute a command.
       tags:
         - "Commands"
+  /graph/:
+    get:
+      description: |
+        Each node includes path, name, tags, link count, and backlink count. Each edge represents a wiki-link from source to target. Use the optional `filter` query parameter to limit results to paths containing the filter string.
+      parameters:
+        - description: "Optional path filter string (case-insensitive substring match)."
+          in: "query"
+          name: "filter"
+          required: false
+          schema:
+            type: "string"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  edges:
+                    items:
+                      properties:
+                        source:
+                          type: "string"
+                        target:
+                          type: "string"
+                      type: "object"
+                    type: "array"
+                  nodes:
+                    items:
+                      properties:
+                        backlinkCount:
+                          type: "number"
+                        linkCount:
+                          type: "number"
+                        name:
+                          type: "string"
+                        path:
+                          type: "string"
+                        tags:
+                          items:
+                            type: "string"
+                          type: "array"
+                      type: "object"
+                    type: "array"
+                type: "object"
+          description: "Success"
+      summary: |
+        Return the full graph structure of the vault as nodes and edges.
+      tags:
+        - "Graph"
+  /graph/analyze/:
+    get:
+      description: |
+        Returns total node/edge counts, orphan notes (no links in or out), hub notes (highest degree), and connected components.
+      parameters:
+        - description: "Number of top hubs to return (default: 10)."
+          in: "query"
+          name: "topN"
+          required: false
+          schema:
+            default: 10
+            type: "number"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  connectedComponents:
+                    items:
+                      items:
+                        type: "string"
+                      type: "array"
+                    type: "array"
+                  hubs:
+                    items:
+                      properties:
+                        degree:
+                          type: "number"
+                        path:
+                          type: "string"
+                      type: "object"
+                    type: "array"
+                  orphans:
+                    items:
+                      type: "string"
+                    type: "array"
+                  totalEdges:
+                    type: "number"
+                  totalNodes:
+                    type: "number"
+                type: "object"
+          description: "Success"
+      summary: |
+        Analyze the vault graph structure and return computed metrics.
+      tags:
+        - "Graph"
+  "/graph/neighbors/{filename}":
+    get:
+      description: |
+        Returns all notes within N link-hops of the specified note, similar to Obsidian's local graph view. Each node includes a depth field indicating distance from the root.
+      parameters:
+        - description: "File path relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+        - description: "Maximum link-hop depth to traverse (default: 1)."
+          in: "query"
+          name: "depth"
+          required: false
+          schema:
+            default: 1
+            type: "number"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  edges:
+                    items:
+                      properties:
+                        source:
+                          type: "string"
+                        target:
+                          type: "string"
+                      type: "object"
+                    type: "array"
+                  nodes:
+                    items:
+                      properties:
+                        depth:
+                          type: "number"
+                        name:
+                          type: "string"
+                        path:
+                          type: "string"
+                      type: "object"
+                    type: "array"
+                type: "object"
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        Return the local graph neighborhood of a specific note.
+      tags:
+        - "Graph"
+  /links/:
+    delete:
+      description: |
+        Matches [[target]], [[target|display]], [[target#heading]], and [[target#heading|display]] patterns. Optionally restrict deletion to a specific line number.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                line:
+                  description: "Optional 0-indexed line number to restrict deletion to."
+                  type: "number"
+                path:
+                  description: "File path of the note to remove the link from."
+                  type: "string"
+                target:
+                  description: "Target note name to match in the wiki-link."
+                  type: "string"
+              required:
+                - "path"
+                - "target"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Bad request"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        Remove a wiki-link from a note.
+      tags:
+        - "Links"
+    post:
+      description: |
+        Creates a [[target]] or [[target|display]] link. Can optionally target a specific heading with [[target#heading]]. Position can be a specific line/character, "end" to append, or omitted to append.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                displayText:
+                  description: "Optional display text for the link."
+                  type: "string"
+                heading:
+                  description: "Optional heading to link to."
+                  type: "string"
+                path:
+                  description: "File path of the note to add the link to."
+                  type: "string"
+                position:
+                  description: "Where to insert the link: {line, ch}, \"end\", or omit to append."
+                target:
+                  description: "Target note name or path for the wiki-link."
+                  type: "string"
+              required:
+                - "path"
+                - "target"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Bad request"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        Insert a wiki-link into a note.
+      tags:
+        - "Links"
+  "/links/suggest/{filename}":
+    get:
+      description: |
+        Finds unlinked mentions — places where another note's name appears in the text but is not already wrapped in a [[wiki-link]].
+      parameters:
+        - description: "File path relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  suggestions:
+                    items:
+                      properties:
+                        ch:
+                          type: "number"
+                        context:
+                          type: "string"
+                        line:
+                          type: "number"
+                        noteName:
+                          type: "string"
+                        notePath:
+                          type: "string"
+                      type: "object"
+                    type: "array"
+                type: "object"
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        Suggest potential wiki-links to existing notes.
+      tags:
+        - "Links"
+  "/links/{filename}":
+    get:
+      description: |
+        Each link includes target path, display text, line number, character position, surrounding context text, and direction (outgoing/incoming).
+      parameters:
+        - description: "File path relative to vault root."
+          in: "path"
+          name: "filename"
+          required: true
+          schema:
+            format: "path"
+            type: "string"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                properties:
+                  links:
+                    items:
+                      properties:
+                        ch:
+                          type: "number"
+                        context:
+                          type: "string"
+                        direction:
+                          enum:
+                            - "outgoing"
+                            - "incoming"
+                          type: "string"
+                        displayText:
+                          type: "string"
+                        line:
+                          type: "number"
+                        target:
+                          type: "string"
+                      type: "object"
+                    type: "array"
+                type: "object"
+          description: "Success"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        List all outgoing and incoming wiki-links for a note.
+      tags:
+        - "Links"
   /mcp/:
     get:
       description: |
@@ -2953,6 +3723,58 @@ paths:
         Get a list of all tags with metadata.
       tags:
         - "Tags"
+  /transclusions/:
+    post:
+      description: |
+        Creates either ![[note#^block]] for block transclusions or ![[note#heading]] for heading transclusions.
+      requestBody:
+        content:
+          application/json:
+            schema:
+              properties:
+                path:
+                  description: "File path of the note to add the transclusion to."
+                  type: "string"
+                position:
+                  description: "Where to insert: {line}, \"end\", or omit to append."
+                refType:
+                  description: "Type of reference."
+                  enum:
+                    - "block"
+                    - "heading"
+                  type: "string"
+                targetNote:
+                  description: "Target note name or path to transclude from."
+                  type: "string"
+                targetRef:
+                  description: "Block ID (without ^) or heading text to transclude."
+                  type: "string"
+              required:
+                - "path"
+                - "targetNote"
+                - "targetRef"
+                - "refType"
+              type: "object"
+        required: true
+      responses:
+        "200":
+          description: "Success"
+        "400":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "Bad request"
+        "404":
+          content:
+            application/json:
+              schema:
+                "$ref": "#/components/schemas/Error"
+          description: "File not found"
+      summary: |
+        Insert a transclusion (embed) into a note.
+      tags:
+        - "Transclusions"
   /vault/:
     get:
       description: |
@@ -3800,3 +4622,8 @@ tags:
   - name: "Open"
   - name: "System"
   - name: "MCP"
+  - name: "Graph"
+  - name: "Links"
+  - name: "Blocks"
+  - name: "Transclusions"
+  - name: "Canvas"

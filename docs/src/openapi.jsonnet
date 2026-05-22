@@ -159,6 +159,11 @@ std.manifestYamlDoc(
       { name: 'Open' },
       { name: 'System' },
       { name: 'MCP' },
+      { name: 'Graph' },
+      { name: 'Links' },
+      { name: 'Blocks' },
+      { name: 'Transclusions' },
+      { name: 'Canvas' },
     ],
     paths: {
       '/active/': {
@@ -1051,6 +1056,753 @@ std.manifestYamlDoc(
           },
         },
       },
+      // ---- Graph endpoints ----
+      '/graph/': {
+        get: {
+          tags: ['Graph'],
+          summary: 'Return the full graph structure of the vault as nodes and edges.\n',
+          description: 'Each node includes path, name, tags, link count, and backlink count. Each edge represents a wiki-link from source to target. Use the optional `filter` query parameter to limit results to paths containing the filter string.\n',
+          parameters: [
+            {
+              name: 'filter',
+              'in': 'query',
+              description: 'Optional path filter string (case-insensitive substring match).',
+              required: false,
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      nodes: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            name: { type: 'string' },
+                            tags: { type: 'array', items: { type: 'string' } },
+                            linkCount: { type: 'number' },
+                            backlinkCount: { type: 'number' },
+                          },
+                        },
+                      },
+                      edges: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            source: { type: 'string' },
+                            target: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/graph/analyze/': {
+        get: {
+          tags: ['Graph'],
+          summary: 'Analyze the vault graph structure and return computed metrics.\n',
+          description: 'Returns total node/edge counts, orphan notes (no links in or out), hub notes (highest degree), and connected components.\n',
+          parameters: [
+            {
+              name: 'topN',
+              'in': 'query',
+              description: 'Number of top hubs to return (default: 10).',
+              required: false,
+              schema: { type: 'number', default: 10 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      totalNodes: { type: 'number' },
+                      totalEdges: { type: 'number' },
+                      orphans: { type: 'array', items: { type: 'string' } },
+                      hubs: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            degree: { type: 'number' },
+                          },
+                        },
+                      },
+                      connectedComponents: {
+                        type: 'array',
+                        items: {
+                          type: 'array',
+                          items: { type: 'string' },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+      },
+      '/graph/neighbors/{filename}': {
+        get: {
+          tags: ['Graph'],
+          summary: 'Return the local graph neighborhood of a specific note.\n',
+          description: 'Returns all notes within N link-hops of the specified note, similar to Obsidian\'s local graph view. Each node includes a depth field indicating distance from the root.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'File path relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+            {
+              name: 'depth',
+              'in': 'query',
+              description: 'Maximum link-hop depth to traverse (default: 1).',
+              required: false,
+              schema: { type: 'number', default: 1 },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      nodes: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            path: { type: 'string' },
+                            name: { type: 'string' },
+                            depth: { type: 'number' },
+                          },
+                        },
+                      },
+                      edges: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            source: { type: 'string' },
+                            target: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+
+      // ---- Link endpoints ----
+      '/links/{filename}': {
+        get: {
+          tags: ['Links'],
+          summary: 'List all outgoing and incoming wiki-links for a note.\n',
+          description: 'Each link includes target path, display text, line number, character position, surrounding context text, and direction (outgoing/incoming).\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'File path relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      links: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            target: { type: 'string' },
+                            displayText: { type: 'string' },
+                            line: { type: 'number' },
+                            ch: { type: 'number' },
+                            context: { type: 'string' },
+                            direction: { type: 'string', enum: ['outgoing', 'incoming'] },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/links/': {
+        post: {
+          tags: ['Links'],
+          summary: 'Insert a wiki-link into a note.\n',
+          description: 'Creates a [[target]] or [[target|display]] link. Can optionally target a specific heading with [[target#heading]]. Position can be a specific line/character, "end" to append, or omitted to append.\n',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['path', 'target'],
+                  properties: {
+                    path: { type: 'string', description: 'File path of the note to add the link to.' },
+                    target: { type: 'string', description: 'Target note name or path for the wiki-link.' },
+                    displayText: { type: 'string', description: 'Optional display text for the link.' },
+                    heading: { type: 'string', description: 'Optional heading to link to.' },
+                    position: { description: 'Where to insert the link: {line, ch}, "end", or omit to append.' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '400': {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+        delete: {
+          tags: ['Links'],
+          summary: 'Remove a wiki-link from a note.\n',
+          description: 'Matches [[target]], [[target|display]], [[target#heading]], and [[target#heading|display]] patterns. Optionally restrict deletion to a specific line number.\n',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['path', 'target'],
+                  properties: {
+                    path: { type: 'string', description: 'File path of the note to remove the link from.' },
+                    target: { type: 'string', description: 'Target note name to match in the wiki-link.' },
+                    line: { type: 'number', description: 'Optional 0-indexed line number to restrict deletion to.' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '400': {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/links/suggest/{filename}': {
+        get: {
+          tags: ['Links'],
+          summary: 'Suggest potential wiki-links to existing notes.\n',
+          description: 'Finds unlinked mentions — places where another note\'s name appears in the text but is not already wrapped in a [[wiki-link]].\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'File path relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      suggestions: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            noteName: { type: 'string' },
+                            notePath: { type: 'string' },
+                            line: { type: 'number' },
+                            ch: { type: 'number' },
+                            context: { type: 'string' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+
+      // ---- Block endpoints ----
+      '/blocks/{filename}': {
+        get: {
+          tags: ['Blocks'],
+          summary: 'List all block references in a file.\n',
+          description: 'Returns each block\'s ID, content (the paragraph containing the block ref), and line number.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'File path relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      blocks: {
+                        type: 'array',
+                        items: {
+                          type: 'object',
+                          properties: {
+                            id: { type: 'string' },
+                            content: { type: 'string' },
+                            line: { type: 'number' },
+                          },
+                        },
+                      },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+        post: {
+          tags: ['Blocks'],
+          summary: 'Add a block reference ID to a specific line in a note.\n',
+          description: 'The block ID is appended to the end of the specified line. Throws if the block ID already exists in the file.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'File path relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['line', 'blockId'],
+                  properties: {
+                    line: { type: 'number', description: '0-indexed line number to add the block ID to.' },
+                    blockId: { type: 'string', description: 'Block reference ID (alphanumeric and hyphens, no ^ prefix).' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '400': {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/blocks/{filename}/{blockId}': {
+        get: {
+          tags: ['Blocks'],
+          summary: 'Read the content of a specific block reference in a file.\n',
+          description: 'Returns the block ID, its content (the full paragraph), and line number.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'File path relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+            {
+              name: 'blockId',
+              'in': 'path',
+              description: 'Block reference ID to read (without ^ prefix).',
+              required: true,
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      id: { type: 'string' },
+                      content: { type: 'string' },
+                      line: { type: 'number' },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Block or file not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+
+      // ---- Transclusion endpoints ----
+      '/transclusions/': {
+        post: {
+          tags: ['Transclusions'],
+          summary: 'Insert a transclusion (embed) into a note.\n',
+          description: 'Creates either ![[note#^block]] for block transclusions or ![[note#heading]] for heading transclusions.\n',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['path', 'targetNote', 'targetRef', 'refType'],
+                  properties: {
+                    path: { type: 'string', description: 'File path of the note to add the transclusion to.' },
+                    targetNote: { type: 'string', description: 'Target note name or path to transclude from.' },
+                    targetRef: { type: 'string', description: 'Block ID (without ^) or heading text to transclude.' },
+                    refType: { type: 'string', enum: ['block', 'heading'], description: 'Type of reference.' },
+                    position: { description: 'Where to insert: {line}, "end", or omit to append.' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '400': {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+            '404': {
+              description: 'File not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+
+      // ---- Canvas endpoints ----
+      '/canvas/': {
+        get: {
+          tags: ['Canvas'],
+          summary: 'List all .canvas files in the vault.\n',
+          description: 'Returns an array of file paths for all canvas files.\n',
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      files: { type: 'array', items: { type: 'string' } },
+                    },
+                  },
+                },
+              },
+            },
+          },
+        },
+        post: {
+          tags: ['Canvas'],
+          summary: 'Create a new canvas file.\n',
+          description: 'Creates a new canvas file with initial nodes and edges. The path must end with .canvas extension. Follows JSON Canvas spec 1.0.\n',
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['path'],
+                  properties: {
+                    path: { type: 'string', description: 'Path for the new .canvas file.' },
+                    nodes: { type: 'array', description: 'Initial nodes to place on the canvas.', items: { type: 'object' } },
+                    edges: { type: 'array', description: 'Initial edges connecting nodes.', items: { type: 'object' } },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '201': { description: 'Created' },
+            '400': {
+              description: 'Bad request',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/canvas/{filename}': {
+        get: {
+          tags: ['Canvas'],
+          summary: 'Read and parse a canvas file.\n',
+          description: 'Returns the full JSON Canvas structure with nodes and edges. Follows JSON Canvas spec 1.0.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'Path to the .canvas file relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          responses: {
+            '200': {
+              description: 'Success',
+              content: {
+                'application/json': {
+                  schema: {
+                    type: 'object',
+                    properties: {
+                      nodes: { type: 'array', items: { type: 'object' } },
+                      edges: { type: 'array', items: { type: 'object' } },
+                    },
+                  },
+                },
+              },
+            },
+            '404': {
+              description: 'Canvas file not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+        put: {
+          tags: ['Canvas'],
+          summary: 'Replace the entire content of a canvas file.\n',
+          description: 'Replaces all nodes and edges in an existing canvas file.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'Path to the .canvas file relative to vault root.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['nodes', 'edges'],
+                  properties: {
+                    nodes: { type: 'array', items: { type: 'object' } },
+                    edges: { type: 'array', items: { type: 'object' } },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '404': {
+              description: 'Canvas file not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/canvas/{filename}/nodes': {
+        post: {
+          tags: ['Canvas'],
+          summary: 'Add a node to an existing canvas.\n',
+          description: 'Node types: text (with text content), file (referencing a vault file), link (external URL), group (visual container). Throws if a node with the same ID already exists.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'Path to the .canvas file.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['id', 'type', 'x', 'y', 'width', 'height'],
+                  properties: {
+                    id: { type: 'string' },
+                    type: { type: 'string', enum: ['text', 'file', 'link', 'group'] },
+                    x: { type: 'number' },
+                    y: { type: 'number' },
+                    width: { type: 'number' },
+                    height: { type: 'number' },
+                    text: { type: 'string' },
+                    file: { type: 'string' },
+                    url: { type: 'string' },
+                    label: { type: 'string' },
+                    color: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '404': {
+              description: 'Canvas file not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/canvas/{filename}/edges': {
+        post: {
+          tags: ['Canvas'],
+          summary: 'Add an edge between two nodes on a canvas.\n',
+          description: 'Edges connect a fromNode to a toNode, optionally specifying sides and arrow endpoints.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'Path to the .canvas file.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+          ],
+          requestBody: {
+            required: true,
+            content: {
+              'application/json': {
+                schema: {
+                  type: 'object',
+                  required: ['id', 'fromNode', 'toNode'],
+                  properties: {
+                    id: { type: 'string' },
+                    fromNode: { type: 'string' },
+                    toNode: { type: 'string' },
+                    fromSide: { type: 'string', enum: ['top', 'right', 'bottom', 'left'] },
+                    toSide: { type: 'string', enum: ['top', 'right', 'bottom', 'left'] },
+                    fromEnd: { type: 'string', enum: ['none', 'arrow'] },
+                    toEnd: { type: 'string', enum: ['none', 'arrow'] },
+                    label: { type: 'string' },
+                    color: { type: 'string' },
+                  },
+                },
+              },
+            },
+          },
+          responses: {
+            '200': { description: 'Success' },
+            '404': {
+              description: 'Canvas file not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+      '/canvas/{filename}/nodes/{nodeId}': {
+        delete: {
+          tags: ['Canvas'],
+          summary: 'Remove a node from a canvas by its ID.\n',
+          description: 'Also removes all edges connected to the deleted node.\n',
+          parameters: [
+            {
+              name: 'filename',
+              'in': 'path',
+              description: 'Path to the .canvas file.',
+              required: true,
+              schema: { type: 'string', format: 'path' },
+            },
+            {
+              name: 'nodeId',
+              'in': 'path',
+              description: 'ID of the node to delete.',
+              required: true,
+              schema: { type: 'string' },
+            },
+          ],
+          responses: {
+            '200': { description: 'Success' },
+            '404': {
+              description: 'Canvas file not found',
+              content: { 'application/json': { schema: { '$ref': '#/components/schemas/Error' } } },
+            },
+          },
+        },
+      },
+
       '/obsidian-local-rest-api.crt': {
         get: {
           tags: [

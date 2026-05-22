@@ -16,6 +16,10 @@ Access your vault through the **REST API** or the **built-in [MCP server](https:
 - **List and execute commands** — trigger any Obsidian command as if you'd used the command palette
 - **Query tags** — list all tags across your vault with usage counts
 - **Open files in Obsidian** — tell Obsidian to open a specific note in its UI
+- **Explore the vault graph** — get the full link graph, analyze orphans/hubs/components, or traverse a note's local neighborhood
+- **Manage wiki-links** — list, create, delete, and discover unlinked mentions for any note
+- **Work with block references** — list, create, and read `^block-id` references; insert transclusions (`![[note#^block]]`)
+- **Canvas operations** — create, read, update, and delete nodes/edges in `.canvas` files (JSON Canvas spec 1.0)
 - **Extend the API** — other plugins can register their own routes via the [API extension interface](https://github.com/coddingtonbear/obsidian-local-rest-api/wiki/Adding-your-own-API-Routes-via-an-Extension)
 
 All requests are served over HTTPS with a self-signed certificate and gated behind API key authentication.
@@ -146,6 +150,20 @@ Any MCP client that supports the Streamable HTTP transport can connect to `https
 | `/open/{path}` | POST | Open a file in the Obsidian UI |
 | `/` | GET | Server status and authentication check |
 | `/mcp/` | GET POST | MCP (Model Context Protocol) server — connect AI agents directly to your vault |
+| `/graph/` | GET | Full vault graph as nodes and edges |
+| `/graph/analyze/` | GET | Graph metrics: orphans, hubs, connected components |
+| `/graph/neighbors/{path}` | GET | Local graph neighborhood (BFS traversal) |
+| `/links/{path}` | GET | List outgoing and incoming wiki-links for a note |
+| `/links/` | POST DELETE | Create or remove wiki-links in a note |
+| `/links/suggest/{path}` | GET | Suggest potential wiki-links (unlinked mentions) |
+| `/blocks/{path}` | GET POST | List block references or add a new one |
+| `/blocks/{path}/{blockId}` | GET | Read a specific block reference |
+| `/transclusions/` | POST | Insert a transclusion embed into a note |
+| `/canvas/` | GET POST | List canvas files or create a new canvas |
+| `/canvas/{path}` | GET PUT | Read or replace a canvas file |
+| `/canvas/{path}/nodes` | POST | Add a node to a canvas |
+| `/canvas/{path}/edges` | POST | Add an edge to a canvas |
+| `/canvas/{path}/nodes/{nodeId}` | DELETE | Remove a node (and its edges) from a canvas |
 
 For full request/response details, see the [interactive docs](https://coddingtonbear.github.io/obsidian-local-rest-api/).
 
@@ -273,6 +291,24 @@ The exact config syntax varies by client; see the [Quick start](#mcp-clients) ex
 | `command_list` | List all registered Obsidian commands |
 | `command_execute` | Execute an Obsidian command by ID |
 | `open_file` | Open a file in the Obsidian UI |
+| `graph_get` | Return the full graph structure of the vault as nodes and edges |
+| `graph_analyze` | Analyze the vault graph structure and return computed metrics |
+| `graph_neighbors` | Return the local graph neighborhood of a specific note |
+| `link_list` | List all outgoing and incoming wiki-links for a note |
+| `link_create` | Insert a wiki-link into a note |
+| `link_delete` | Remove a wiki-link from a note |
+| `link_suggest` | Analyze a note's content and suggest potential wiki-links to existing notes |
+| `block_list` | List all block references (^block-id) in a file |
+| `block_create` | Add a block reference ID (^block-id) to a specific line in a note |
+| `block_read` | Read the content of a specific block reference in a file |
+| `transclusion_create` | Insert a transclusion (embed) into a note |
+| `canvas_list` | List all .canvas files in the vault |
+| `canvas_read` | Read and parse a canvas file |
+| `canvas_create` | Create a new canvas file with initial nodes and edges |
+| `canvas_add_node` | Add a node to an existing canvas |
+| `canvas_add_edge` | Add an edge between two nodes on a canvas |
+| `canvas_delete_node` | Remove a node from a canvas by its ID |
+| `canvas_update` | Replace the entire content of a canvas file with new nodes and edges |
 
 ### Available resources
 
