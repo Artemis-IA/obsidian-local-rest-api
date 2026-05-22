@@ -966,11 +966,13 @@ export class McpHandler {
     this.tool(server,
       "ai_generate_tags",
       "Use the client's LLM (via MCP sampling) to suggest tags for a note based on its content. " +
+        "Returns a parsed array of tag strings. If apply is true, writes them to the note's frontmatter. " +
         "Requires client sampling capability.",
       {
         path: z.string().describe("File path relative to vault root"),
+        apply: z.boolean().optional().describe("If true, apply the suggested tags to the note's frontmatter (default: false)"),
       },
-      async ({ path }: { path: string }) => {
+      async ({ path, apply }: { path: string; apply?: boolean }) => {
         const file = this.ops.app.vault.getAbstractFileByPath(path);
         if (!(file instanceof TFile)) throw new Error(`File not found: ${path}`);
         const meta = await this.ops.getFileMetadataObject(file);
@@ -983,14 +985,36 @@ export class McpHandler {
                 content: {
                   type: "text",
                   text: `Analyze this note and suggest appropriate tags for it. ` +
-                    `Current tags: [${existingTags}]. Return a JSON array of suggested tag strings.\n\n` +
+                    `Current tags: [${existingTags}]. Return ONLY a JSON array of tag strings, nothing else. ` +
+                    `Example: ["tag1", "tag2", "tag3"]\n\n` +
                     `Note "${path}":\n${meta.content}`,
                 },
               },
             ],
             maxTokens: 200,
           }) as { content: { type: string; text: string }; model: string };
-          return this.text({ suggestedTags: result.content.text, model: result.model });
+          // Parse the LLM response into an actual array
+          let tags: string[];
+          try {
+            const rawText = result.content.text.trim();
+            // Extract JSON array from response (LLM may wrap it in markdown code blocks)
+            const jsonMatch = rawText.match(/\[[\s\S]*\]/);
+            tags = jsonMatch ? JSON.parse(jsonMatch[0]) : [];
+            if (!Array.isArray(tags)) tags = [];
+            tags = tags.filter((t): t is string => typeof t === "string").map((t) => t.replace(/^#/, ""));
+          } catch {
+            return this.text({ error: "Failed to parse LLM response as tag array", raw: result.content.text });
+          }
+          // Optionally apply tags to the note's frontmatter
+          if (apply && tags.length > 0) {
+            await this.ops.patchFileSection(
+              path, "frontmatter", "tags", "replace",
+              tags, "application/json",
+              { createTargetIfMissing: true },
+            );
+            return this.text({ applied: true, tags, model: result.model });
+          }
+          return this.text({ suggestedTags: tags, model: result.model });
         } catch (e) {
           return this.text({ error: `Sampling not available: ${(e as Error).message}` });
         }
@@ -1039,7 +1063,7 @@ export class McpHandler {
           for (const [key, value] of Object.entries(updates)) {
             await this.ops.patchFileSection(
               path, "frontmatter", key, "replace",
-              JSON.stringify(value), "application/json",
+              value, "application/json",
               { createTargetIfMissing: true },
             );
           }
