@@ -1382,14 +1382,37 @@ export default class RequestHandler {
 
   // --- Block route handlers ---
 
-  async blockList(req: express.Request, res: express.Response): Promise<void> {
-    const filePath = decodeURIComponent(req.params[0]);
-    try {
-      res.json(await this.operations.listBlocks(filePath));
-    } catch (e) {
-      if (e instanceof FileNotFoundError) {
-        this.returnCannedResponse(res, { statusCode: 404 });
-      } else { throw e; }
+  async blockGet(req: express.Request, res: express.Response): Promise<void> {
+    const fullPath = decodeURIComponent(req.params[0]);
+    // Determine if this is a block read (path ends with non-file segment)
+    // or a block list (path ends with .md or similar)
+    const mdMatch = fullPath.match(/^(.+\.md)\/([^/]+)$/i);
+    if (mdMatch) {
+      // Block read: /blocks/path/to/file.md/blockId
+      const [, filePath, blockId] = mdMatch;
+      try {
+        const block = await this.operations.readBlock(filePath, blockId);
+        if (!block) {
+          this.returnCannedResponse(res, { statusCode: 404, message: `Block ^${blockId} not found` });
+          return;
+        }
+        res.json(block);
+      } catch (e) {
+        if (e instanceof FileNotFoundError) {
+          this.returnCannedResponse(res, { statusCode: 404 });
+        } else if (e instanceof Error && e.message.includes("not found")) {
+          this.returnCannedResponse(res, { statusCode: 404, message: e.message });
+        } else { throw e; }
+      }
+    } else {
+      // Block list: /blocks/path/to/file.md
+      try {
+        res.json(await this.operations.listBlocks(fullPath));
+      } catch (e) {
+        if (e instanceof FileNotFoundError) {
+          this.returnCannedResponse(res, { statusCode: 404 });
+        } else { throw e; }
+      }
     }
   }
 
@@ -1410,22 +1433,6 @@ export default class RequestHandler {
     }
   }
 
-  async blockRead(req: express.Request, res: express.Response): Promise<void> {
-    const filePath = decodeURIComponent(req.params.filePath);
-    const blockId = decodeURIComponent(req.params.blockId);
-    try {
-      const block = await this.operations.readBlock(filePath, blockId);
-      if (!block) {
-        this.returnCannedResponse(res, { statusCode: 404, message: `Block ^${blockId} not found` });
-        return;
-      }
-      res.json(block);
-    } catch (e) {
-      if (e instanceof FileNotFoundError) {
-        this.returnCannedResponse(res, { statusCode: 404 });
-      } else { throw e; }
-    }
-  }
 
   async transclusionCreate(req: express.Request, res: express.Response): Promise<void> {
     const { path, targetNote, targetRef, refType, position } = req.body as {
@@ -1696,16 +1703,15 @@ export default class RequestHandler {
     this.api.route("/graph/analyze/").get(this.handle((rq, rs) => this.graphAnalyze(rq, rs)));
     this.api.route("/graph/neighbors/*").get(this.handle((rq, rs) => this.graphNeighbors(rq, rs)));
 
-    // Link routes
+    // Link routes (suggest must come before the wildcard)
+    this.api.route("/links/suggest/*").get(this.handle((rq, rs) => this.linkSuggest(rq, rs)));
     this.api.route("/links/*").get(this.handle((rq, rs) => this.linkList(rq, rs)));
     this.api.route("/links/").post(this.handle((rq, rs) => this.linkCreate(rq, rs)));
     this.api.route("/links/").delete(this.handle((rq, rs) => this.linkDelete(rq, rs)));
-    this.api.route("/links/suggest/*").get(this.handle((rq, rs) => this.linkSuggest(rq, rs)));
 
     // Block routes
-    this.api.route("/blocks/*").get(this.handle((rq, rs) => this.blockList(rq, rs)));
+    this.api.route("/blocks/*").get(this.handle((rq, rs) => this.blockGet(rq, rs)));
     this.api.route("/blocks/*").post(this.handle((rq, rs) => this.blockCreate(rq, rs)));
-    this.api.route("/blocks/:filePath/:blockId").get(this.handle((rq, rs) => this.blockRead(rq, rs)));
 
     // Transclusion routes
     this.api.route("/transclusions/").post(this.handle((rq, rs) => this.transclusionCreate(rq, rs)));

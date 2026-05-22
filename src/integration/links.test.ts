@@ -45,15 +45,14 @@ describe("GET /links/{path}", () => {
     const res = await authedFetch(`/links/${LINK_PATH}`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(Array.isArray(body.links)).toBe(true);
+    expect(Array.isArray(body)).toBe(true);
   });
 
   test("includes outgoing link to link-target", async () => {
     const res = await authedFetch(`/links/${LINK_PATH}`);
-    const body = await res.json();
-    const outgoing = body.links.find(
-      (l: { target: string; direction: string }) =>
-        l.target.includes("link-target") && l.direction === "outgoing"
+    const body = await res.json() as { target: string; direction: string }[];
+    const outgoing = body.find(
+      (l) => l.target.includes("link-target") && l.direction === "outgoing"
     );
     expect(outgoing).toBeDefined();
   });
@@ -88,12 +87,14 @@ describe("POST /links/ and DELETE /links/", () => {
     });
     expect(createRes.status).toBe(200);
 
+    // Wait for Obsidian to re-index the file
+    await new Promise((r) => setTimeout(r, 1000));
+
     // Verify the link exists
     const listRes = await authedFetch(`/links/${linkTestPath}`);
-    const listBody = await listRes.json();
-    const found = listBody.links.find(
-      (l: { target: string; direction: string }) =>
-        l.target.includes("link-target") && l.direction === "outgoing"
+    const listBody = await listRes.json() as { target: string; direction: string }[];
+    const found = listBody.find(
+      (l) => l.target.includes("link-target") && l.direction === "outgoing"
     );
     expect(found).toBeDefined();
 
@@ -115,7 +116,7 @@ describe("GET /links/suggest/{path}", () => {
     const res = await authedFetch(`/links/suggest/${LINK_PATH}`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(Array.isArray(body.suggestions)).toBe(true);
+    expect(Array.isArray(body)).toBe(true);
   });
 
   test("returns 404 for non-existent file", async () => {

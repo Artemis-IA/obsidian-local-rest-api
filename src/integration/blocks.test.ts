@@ -20,16 +20,16 @@ describe("GET /blocks/{path}", () => {
     const res = await authedFetch(`/blocks/${TEST_PATH}`);
     expect(res.status).toBe(200);
     const body = await res.json();
-    expect(Array.isArray(body.blocks)).toBe(true);
+    expect(Array.isArray(body)).toBe(true);
   });
 
   test("includes beta-block from fixture", async () => {
     const res = await authedFetch(`/blocks/${TEST_PATH}`);
-    const body = await res.json();
-    const block = body.blocks.find((b: { id: string }) => b.id === BLOCK_BETA);
+    const body = await res.json() as { id: string; content: string; line: number }[];
+    const block = body.find((b) => b.id === BLOCK_BETA);
     expect(block).toBeDefined();
-    expect(typeof block.content).toBe("string");
-    expect(typeof block.line).toBe("number");
+    expect(typeof block!.content).toBe("string");
+    expect(typeof block!.line).toBe("number");
   });
 
   test("returns 404 for non-existent file", async () => {
@@ -73,11 +73,12 @@ describe("POST /blocks/{path}", () => {
     });
     expect(res.status).toBe(200);
 
-    // Verify it was created
-    const readRes = await authedFetch(`/blocks/${blockTestPath}/new-test-block`);
+    // Verify it was created by listing blocks
+    const readRes = await authedFetch(`/blocks/${blockTestPath}`);
     expect(readRes.status).toBe(200);
-    const body = await readRes.json();
-    expect(body.id).toBe("new-test-block");
+    const body = await readRes.json() as { id: string }[];
+    const created = body.find((b) => b.id === "new-test-block");
+    expect(created).toBeDefined();
   });
 });
 

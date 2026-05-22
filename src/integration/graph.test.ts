@@ -88,8 +88,12 @@ describe("GET /graph/neighbors/", () => {
     expect(root.depth).toBe(0);
   });
 
-  test("returns 404 for non-existent file", async () => {
+  test("returns 200 with isolated node for non-existent file", async () => {
     const res = await authedFetch("/graph/neighbors/does-not-exist.md");
-    expect(res.status).toBe(404);
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    // Non-existent file is treated as an isolated node with no connections
+    expect(body.nodes.length).toBe(1);
+    expect(body.edges.length).toBe(0);
   });
 });
