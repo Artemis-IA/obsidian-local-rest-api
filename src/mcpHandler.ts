@@ -91,6 +91,17 @@ export class McpHandler {
     req: express.Request,
     res: express.Response,
   ): Promise<void> {
+    // Ensure the Accept header satisfies the SDK's validation which
+    // requires both application/json and text/event-stream, even when
+    // enableJsonResponse is true and we never actually stream SSE.
+    // Clients like Windsurf's mcp-go may only send application/json.
+    const accept = req.headers["accept"] ?? "";
+    if (!accept.includes("text/event-stream")) {
+      req.headers["accept"] = accept
+        ? `${accept}, text/event-stream`
+        : "application/json, text/event-stream";
+    }
+
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     if (!sessionId) {
