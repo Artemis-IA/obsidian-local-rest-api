@@ -309,12 +309,37 @@ The exact config syntax varies by client; see the [Quick start](#mcp-clients) ex
 | `canvas_add_edge` | Add an edge between two nodes on a canvas |
 | `canvas_delete_node` | Remove a node from a canvas by its ID |
 | `canvas_update` | Replace the entire content of a canvas file with new nodes and edges |
+| `ai_summarize_note` | Use client LLM (via MCP sampling) to summarize a note |
+| `ai_generate_tags` | Use client LLM (via MCP sampling) to suggest tags for a note |
+| `elicit_note_properties` | Prompt the user interactively to provide metadata for a note |
+| `elicit_confirmation` | Prompt the user for a yes/no confirmation before a destructive action |
+
+### Available prompts
+
+Prompts are templated workflows that an MCP client can invoke to get structured content for LLM processing.
+
+| Prompt | Description |
+|---|---|
+| `daily-note` | Get today's daily note content (creates if needed) |
+| `summarize-note` | Read a note and return its content formatted for summarization |
+| `create-from-template` | Generate structured content from a template pattern (`meeting-notes`, `project-plan`, `book-review`, `weekly-review`, `research-note`) |
+| `find-related-notes` | Search for notes related to a topic and return snippets for analysis |
+| `audit-frontmatter` | Check notes in a directory for missing frontmatter fields |
 
 ### Available resources
 
 | URI | Description |
 |---|---|
 | `obsidian://local-rest-api/openapi.yaml` | Full OpenAPI specification for this REST API |
+| `ui://obsidian-local-rest-api/graph-visualizer.html` | Interactive vault graph visualizer (MCP App) |
+
+### Advanced MCP features
+
+The server supports several advanced MCP protocol features:
+
+- **Sampling** — Tools like `ai_summarize_note` and `ai_generate_tags` use MCP sampling to request LLM completions from the client. The server reads vault content and asks the client's LLM to process it. Requires client sampling capability; gracefully degrades if unsupported.
+- **Elicitation** — Tools like `elicit_note_properties` and `elicit_confirmation` use MCP elicitation to present forms to the user and collect structured input. Requires client elicitation capability; gracefully degrades if unsupported.
+- **Logging** — The server supports the MCP logging protocol for structured log messages.
 
 ## Contributing
 

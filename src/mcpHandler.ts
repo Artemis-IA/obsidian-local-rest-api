@@ -1,5 +1,5 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import type { CallToolResult } from "@modelcontextprotocol/sdk/types.js";
+import type { CallToolResult, GetPromptResult, LoggingMessageNotification } from "@modelcontextprotocol/sdk/types.js";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import { randomUUID } from "crypto";
 import { z } from "zod";
@@ -20,8 +20,12 @@ const PERIODS = ["daily", "weekly", "monthly", "quarterly", "yearly"] as const;
 interface MinimalMcpServer {
   tool(name: string, description: string, schema: unknown, callback: (args: unknown) => Promise<CallToolResult>): { remove: () => void };
   registerTool(name: string, config: { title?: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; annotations?: unknown; _meta?: Record<string, unknown> }, callback: (args: unknown) => Promise<CallToolResult>): { remove: () => void };
+  prompt(name: string, description: string, schema: unknown, callback: (args: unknown) => Promise<GetPromptResult>): void;
+  prompt(name: string, description: string, callback: () => Promise<GetPromptResult>): void;
   connect(transport: StreamableHTTPServerTransport): Promise<void>;
   resource(name: string, uri: string, meta: unknown, handler: (uri: URL) => Promise<unknown>): void;
+  sendLoggingMessage(params: LoggingMessageNotification["params"], sessionId?: string): Promise<void>;
+  server: { createMessage(params: unknown, options?: unknown): Promise<unknown>; elicitInput(params: unknown, options?: unknown): Promise<unknown> };
 }
 
 const GRAPH_VISUALIZER_URI = "ui://obsidian-local-rest-api/graph-visualizer.html";
@@ -45,8 +49,13 @@ export class McpHandler {
     const server = new McpServer({
       name: "obsidian-local-rest-api",
       version: "1.0.0",
+    }, {
+      capabilities: {
+        logging: {},
+      },
     }) as unknown as MinimalMcpServer;
     this.registerResources(server);
+    this.registerPrompts(server);
     this.registerTools(server);
     for (const ext of this.externalTools) {
       this.tool(server, ext.name, ext.description, ext.schema, async (args) =>
@@ -113,6 +122,7 @@ export class McpHandler {
     const sessionId = req.headers["mcp-session-id"] as string | undefined;
 
     if (!sessionId) {
+      const server = this.createMcpServer();
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
@@ -123,7 +133,6 @@ export class McpHandler {
       transport.onclose = () => {
         if (transport.sessionId) this.transports.delete(transport.sessionId);
       };
-      const server = this.createMcpServer();
       await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
       return;
@@ -196,6 +205,163 @@ export class McpHandler {
           },
         ],
       }),
+    );
+  }
+
+  private registerPrompts(server: MinimalMcpServer): void {
+    // --- Daily note workflow ---
+    server.prompt(
+      "daily-note",
+      "Get today's daily note content or create it if it doesn't exist. " +
+        "Returns the note's markdown content ready for review or editing.",
+      async () => {
+        const [file, err] = await this.ops.periodicGetOrCreateNote("daily", Date.now());
+        if (err || !file)
+          throw new Error(`Could not get/create daily note: ${err != null ? ERROR_CODE_MESSAGES[err] : "unknown"}`);
+        const meta = await this.ops.getFileMetadataObject(file);
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: `Here is today's daily note (${file.path}):\n\n${meta.content}`,
+              },
+            },
+          ],
+        };
+      },
+    );
+
+    // --- Note summary prompt ---
+    server.prompt(
+      "summarize-note",
+      "Read a vault note and return its content for summarization by an LLM.",
+      { path: z.string().describe("File path relative to vault root") },
+      async (args: unknown) => {
+        const { path } = args as { path: string };
+        const file = this.ops.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) throw new Error(`File not found: ${path}`);
+        const meta = await this.ops.getFileMetadataObject(file);
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: `Please summarize the following note "${path}":\n\n${meta.content}`,
+              },
+            },
+          ],
+        };
+      },
+    );
+
+    // --- Insert template prompt ---
+    server.prompt(
+      "create-from-template",
+      "Generate content from a template pattern. Provide a template name " +
+        "(e.g. 'meeting-notes', 'project-plan', 'book-review') and optional context.",
+      {
+        template: z.string().describe("Template type: 'meeting-notes', 'project-plan', 'book-review', 'weekly-review', 'research-note'"),
+        context: z.string().optional().describe("Additional context for the template (e.g. project name, book title)"),
+      },
+      async (args: unknown) => {
+        const { template, context } = args as { template: string; context?: string };
+        const templates: Record<string, string> = {
+          "meeting-notes": "# Meeting Notes\n\n**Date:** {{date}}\n**Attendees:**\n\n## Agenda\n\n## Discussion\n\n## Action Items\n\n- [ ] ",
+          "project-plan": "# Project Plan: {{context}}\n\n## Objective\n\n## Milestones\n\n1. \n\n## Resources\n\n## Timeline\n\n## Risks\n",
+          "book-review": "# Book Review: {{context}}\n\n**Author:**\n**Rating:** /5\n\n## Summary\n\n## Key Takeaways\n\n## Favorite Quotes\n\n## Thoughts\n",
+          "weekly-review": "# Weekly Review — {{date}}\n\n## Accomplishments\n\n## Challenges\n\n## Next Week Goals\n\n## Notes\n",
+          "research-note": "# Research: {{context}}\n\n**Source:**\n**Date:** {{date}}\n\n## Key Findings\n\n## Methodology\n\n## Questions\n\n## Related Work\n",
+        };
+        const date = new Date().toISOString().split("T")[0];
+        let content = templates[template] ?? `# ${template}\n\n{{context}}\n`;
+        content = content.replace(/\{\{date\}\}/g, date);
+        content = content.replace(/\{\{context\}\}/g, context ?? "");
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: `Here is a "${template}" template${context ? ` for "${context}"` : ""}. ` +
+                  `Please review and enhance it with relevant content:\n\n${content}`,
+              },
+            },
+          ],
+        };
+      },
+    );
+
+    // --- Vault search and organize ---
+    server.prompt(
+      "find-related-notes",
+      "Search for notes related to a topic and return their paths and snippets " +
+        "for the LLM to analyze connections and suggest organization.",
+      { topic: z.string().describe("Topic or keyword to find related notes") },
+      async (args: unknown) => {
+        const { topic } = args as { topic: string };
+        const results = await this.ops.simpleSearch(topic, 200);
+        const snippets = results
+          .slice(0, 10)
+          .map((r) => `**${r.filename}** (score: ${(r.score ?? 0).toFixed(2)})\n${r.matches.slice(0, 2).map((m) => `> ${m.context}`).join("\n")}`)
+          .join("\n\n");
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: `I found ${results.length} notes related to "${topic}". Here are the top results:\n\n${snippets}\n\n` +
+                  `Please analyze these notes and suggest how they relate to each other and how I might organize or link them better.`,
+              },
+            },
+          ],
+        };
+      },
+    );
+
+    // --- Frontmatter audit ---
+    server.prompt(
+      "audit-frontmatter",
+      "Check all notes in a directory for missing or inconsistent frontmatter fields. " +
+        "Returns a report of notes with missing properties.",
+      {
+        directory: z.string().optional().describe("Directory to audit (default: vault root)"),
+        requiredFields: z.string().describe("Comma-separated list of required frontmatter fields (e.g. 'tags,date,status')"),
+      },
+      async (args: unknown) => {
+        const { directory, requiredFields } = args as { directory?: string; requiredFields: string };
+        const fields = requiredFields.split(",").map((f) => f.trim());
+        const files = await this.ops.listVaultDirectory(directory ?? "");
+        const issues: string[] = [];
+        for (const f of files.filter((name: string) => name.endsWith(".md")).slice(0, 50)) {
+          const filePath = directory ? `${directory}/${f}` : f;
+          const file = this.ops.app.vault.getAbstractFileByPath(filePath);
+          if (!(file instanceof TFile)) continue;
+          const meta = await this.ops.getFileMetadataObject(file);
+          const fm = meta.frontmatter ?? {};
+          const missing = fields.filter((field) => !(field in fm));
+          if (missing.length > 0) {
+            issues.push(`- **${filePath}**: missing ${missing.map((m) => `\`${m}\``).join(", ")}`);
+          }
+        }
+        return {
+          messages: [
+            {
+              role: "user" as const,
+              content: {
+                type: "text" as const,
+                text: issues.length > 0
+                  ? `Frontmatter audit for ${directory ?? "vault root"} (checking: ${fields.join(", ")}):\n\n${issues.join("\n")}\n\n` +
+                    `Please suggest how to fix these missing fields.`
+                  : `All checked notes in "${directory ?? "vault root"}" have the required fields: ${fields.join(", ")}. No issues found.`,
+              },
+            },
+          ],
+        };
+      },
     );
   }
 
@@ -759,6 +925,169 @@ export class McpHandler {
       }) => {
         await this.ops.createTransclusion(path, targetNote, targetRef, refType, position);
         return this.text({ message: "OK" });
+      },
+    );
+
+    // --- Sampling-powered tools (server requests LLM completion from client) ---
+
+    this.tool(server,
+      "ai_summarize_note",
+      "Use the client's LLM (via MCP sampling) to generate a summary of a vault note. " +
+        "The server reads the note content and sends it to the client for summarization. " +
+        "Requires client sampling capability.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+        maxTokens: z.number().optional().describe("Maximum tokens for the summary (default: 500)"),
+      },
+      async ({ path, maxTokens }: { path: string; maxTokens?: number }) => {
+        const file = this.ops.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) throw new Error(`File not found: ${path}`);
+        const meta = await this.ops.getFileMetadataObject(file);
+        try {
+          const result = await server.server.createMessage({
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Please provide a concise summary of the following note "${path}":\n\n${meta.content}`,
+                },
+              },
+            ],
+            maxTokens: maxTokens ?? 500,
+          }) as { content: { type: string; text: string }; model: string };
+          return this.text({ summary: result.content.text, model: result.model });
+        } catch (e) {
+          return this.text({ error: `Sampling not available: ${(e as Error).message}` });
+        }
+      },
+    );
+
+    this.tool(server,
+      "ai_generate_tags",
+      "Use the client's LLM (via MCP sampling) to suggest tags for a note based on its content. " +
+        "Requires client sampling capability.",
+      {
+        path: z.string().describe("File path relative to vault root"),
+      },
+      async ({ path }: { path: string }) => {
+        const file = this.ops.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) throw new Error(`File not found: ${path}`);
+        const meta = await this.ops.getFileMetadataObject(file);
+        const existingTags = (meta.tags ?? []).join(", ");
+        try {
+          const result = await server.server.createMessage({
+            messages: [
+              {
+                role: "user",
+                content: {
+                  type: "text",
+                  text: `Analyze this note and suggest appropriate tags for it. ` +
+                    `Current tags: [${existingTags}]. Return a JSON array of suggested tag strings.\n\n` +
+                    `Note "${path}":\n${meta.content}`,
+                },
+              },
+            ],
+            maxTokens: 200,
+          }) as { content: { type: string; text: string }; model: string };
+          return this.text({ suggestedTags: result.content.text, model: result.model });
+        } catch (e) {
+          return this.text({ error: `Sampling not available: ${(e as Error).message}` });
+        }
+      },
+    );
+
+    // --- Elicitation-powered tools (server prompts user for input) ---
+
+    this.tool(server,
+      "elicit_note_properties",
+      "Prompt the user interactively (via MCP elicitation) to provide metadata for a note. " +
+        "Collects title, tags, and status via a form presented to the user. " +
+        "Requires client elicitation capability.",
+      {
+        path: z.string().describe("File path to set properties on"),
+      },
+      async ({ path }: { path: string }) => {
+        const file = this.ops.app.vault.getAbstractFileByPath(path);
+        if (!(file instanceof TFile)) throw new Error(`File not found: ${path}`);
+        try {
+          const result = await server.server.elicitInput({
+            message: `Please provide metadata for "${path}":`,
+            requestedSchema: {
+              type: "object",
+              properties: {
+                title: { type: "string", title: "Title", description: "Note title" },
+                tags: { type: "string", title: "Tags", description: "Comma-separated tags" },
+                status: {
+                  type: "string",
+                  title: "Status",
+                  enum: ["draft", "in-progress", "review", "done"],
+                  description: "Note status",
+                },
+              },
+              required: ["title"],
+            },
+          }) as { action: string; content?: { title?: string; tags?: string; status?: string } };
+          if (result.action !== "accept" || !result.content) {
+            return this.text({ message: "User cancelled" });
+          }
+          // Apply the metadata as frontmatter
+          const updates: Record<string, unknown> = {};
+          if (result.content.title) updates["title"] = result.content.title;
+          if (result.content.tags) updates["tags"] = result.content.tags.split(",").map((t) => t.trim());
+          if (result.content.status) updates["status"] = result.content.status;
+          for (const [key, value] of Object.entries(updates)) {
+            await this.ops.patchFileSection(
+              path, "frontmatter", key, "replace",
+              JSON.stringify(value), "application/json",
+              { createTargetIfMissing: true },
+            );
+          }
+          return this.text({ message: "Properties updated", properties: updates });
+        } catch (e) {
+          return this.text({ error: `Elicitation not available: ${(e as Error).message}` });
+        }
+      },
+    );
+
+    this.tool(server,
+      "elicit_confirmation",
+      "Prompt the user for a yes/no confirmation before performing a destructive action. " +
+        "Returns the user's decision. Requires client elicitation capability.",
+      {
+        message: z.string().describe("The confirmation message to show the user"),
+      },
+      async ({ message }: { message: string }) => {
+        try {
+          const result = await server.server.elicitInput({
+            message,
+            requestedSchema: {
+              type: "object",
+              properties: {
+                confirm: {
+                  type: "boolean",
+                  title: "Confirm",
+                  description: "Do you want to proceed?",
+                },
+                reason: {
+                  type: "string",
+                  title: "Reason (optional)",
+                  description: "Optional reason for your decision",
+                },
+              },
+              required: ["confirm"],
+            },
+          }) as { action: string; content?: { confirm?: boolean; reason?: string } };
+          if (result.action !== "accept") {
+            return this.text({ confirmed: false, reason: "User dismissed" });
+          }
+          return this.text({
+            confirmed: result.content?.confirm ?? false,
+            reason: result.content?.reason,
+          });
+        } catch (e) {
+          return this.text({ error: `Elicitation not available: ${(e as Error).message}` });
+        }
       },
     );
 

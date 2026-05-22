@@ -10,6 +10,10 @@ const mockTransportHandleRequest = jest.fn().mockResolvedValue(undefined);
 const mockNewSessionId = "new-session-id";
 
 const mockResource = jest.fn();
+const mockPrompt = jest.fn();
+const mockSendLoggingMessage = jest.fn().mockResolvedValue(undefined);
+const mockCreateMessage = jest.fn().mockResolvedValue({ content: { type: "text", text: "mock" }, model: "mock" });
+const mockElicitInput = jest.fn().mockResolvedValue({ action: "accept", content: {} });
 
 // Prevent ts-jest from compiling vaultOperations.ts (which pulls in json-logic-js
 // with a deeply recursive RulesLogic type that OOMs TypeScript 4.7). The real
@@ -24,7 +28,10 @@ jest.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
     tool: mockTool,
     registerTool: mockRegisterTool,
     resource: mockResource,
+    prompt: mockPrompt,
     connect: mockConnect,
+    sendLoggingMessage: mockSendLoggingMessage,
+    server: { createMessage: mockCreateMessage, elicitInput: mockElicitInput },
   })),
 }));
 
@@ -164,11 +171,27 @@ describe("McpHandler", () => {
     expect(uri1).toBe("ui://obsidian-local-rest-api/graph-visualizer.html");
   });
 
+  // ---- prompt registration -------------------------------------------------
+
+  test("registers all 5 prompts", () => {
+    expect(mockPrompt).toHaveBeenCalledTimes(5);
+    const promptNames = mockPrompt.mock.calls.map((c: unknown[]) => c[0]);
+    expect(promptNames).toEqual(
+      expect.arrayContaining([
+        "daily-note",
+        "summarize-note",
+        "create-from-template",
+        "find-related-notes",
+        "audit-frontmatter",
+      ]),
+    );
+  });
+
   // ---- tool registration --------------------------------------------------
 
-  test("registers all 33 tools", () => {
-    // 32 tools registered via tool() + 1 via registerTool() (graph_get with MCP App metadata)
-    expect(mockTool).toHaveBeenCalledTimes(32);
+  test("registers all 37 tools", () => {
+    // 36 tools registered via tool() + 1 via registerTool() (graph_get with MCP App metadata)
+    expect(mockTool).toHaveBeenCalledTimes(36);
     expect(mockRegisterTool).toHaveBeenCalledTimes(1);
     const toolNames = mockTool.mock.calls.map((c: unknown[]) => c[0]);
     const registerToolNames = mockRegisterTool.mock.calls.map((c: unknown[]) => c[0]);
