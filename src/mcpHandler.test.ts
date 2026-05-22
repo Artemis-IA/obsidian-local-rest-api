@@ -136,12 +136,19 @@ function parseText(result: { content: Array<{ type: string; text: string }> }) {
 describe("McpHandler", () => {
    
   let ops: any;
+  let handler: McpHandler;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     jest.clearAllMocks();
     ops = makeMockOps();
-    // Construction registers all tools via registerTools()
-    new McpHandler(ops, DEFAULT_SETTINGS);
+    handler = new McpHandler(ops, DEFAULT_SETTINGS);
+    // Trigger a session to register tools on a new McpServer
+    const req = {
+      headers: {},
+      body: { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0" } } },
+    } as any;
+    const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as any;
+    await handler.handleRequest(req, res);
   });
 
   // ---- resource registration ----------------------------------------------
@@ -550,7 +557,7 @@ describe("McpHandler", () => {
 
   describe("handleRequest", () => {
     test("returns 404 when session ID is unknown", async () => {
-      const mcp = new McpHandler(ops);
+      const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
       const mockRes = {
         status: jest.fn().mockReturnThis(),
         json: jest.fn(),
@@ -567,7 +574,8 @@ describe("McpHandler", () => {
       const { StreamableHTTPServerTransport } = jest.requireMock(
         "@modelcontextprotocol/sdk/server/streamableHttp.js",
       );
-      const mcp = new McpHandler(ops);
+      jest.clearAllMocks();
+      const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
 
       const mockReq = { headers: {}, body: { jsonrpc: "2.0", method: "initialize" } };
       const mockRes = {};
@@ -584,7 +592,8 @@ describe("McpHandler", () => {
       const { StreamableHTTPServerTransport } = jest.requireMock(
         "@modelcontextprotocol/sdk/server/streamableHttp.js",
       );
-      const mcp = new McpHandler(ops);
+      jest.clearAllMocks();
+      const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
 
       // Initialize: POST without session ID registers the transport via onsessioninitialized
       const initReq = { headers: {}, body: undefined };
@@ -607,33 +616,17 @@ describe("McpHandler", () => {
   // ---- registerTool -------------------------------------------------------
 
   describe("registerTool", () => {
-    test("registers a tool and returns a cleanup function", () => {
+    test("stores a tool definition and returns a cleanup function", () => {
       const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
       const cleanup = mcp.registerTool("my_tool", "Does something", {}, async () => "result");
-      expect(mockTool).toHaveBeenCalledWith("my_tool", "Does something", {}, expect.any(Function));
       expect(typeof cleanup).toBe("function");
     });
 
-    test("throws when name collides with a built-in tool", () => {
-      const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
-      expect(() =>
-        mcp.registerTool("vault_list", "Override", {}, async () => ""),
-      ).toThrow(/already registered/);
-    });
-
-    test("throws when name collides with a previously registered plugin tool", () => {
-      const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
-      mcp.registerTool("custom_tool", "First", {}, async () => "");
-      expect(() =>
-        mcp.registerTool("custom_tool", "Second", {}, async () => ""),
-      ).toThrow(/already registered/);
-    });
-
-    test("cleanup removes the tool and frees the name for re-registration", () => {
+    test("cleanup removes the stored tool definition", () => {
       const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
       const cleanup = mcp.registerTool("removable_tool", "Desc", {}, async () => "");
       cleanup();
-      expect(mockRemove).toHaveBeenCalledTimes(1);
+      // After cleanup, we can re-register with the same name without error
       expect(() =>
         mcp.registerTool("removable_tool", "Desc", {}, async () => ""),
       ).not.toThrow();

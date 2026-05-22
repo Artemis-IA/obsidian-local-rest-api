@@ -28,26 +28,37 @@ const GRAPH_VISUALIZER_URI = "ui://obsidian-local-rest-api/graph-visualizer.html
 const MCP_APP_MIME_TYPE = "text/html;type=mcp-app";
 
 export class McpHandler {
-  private readonly mcpServer: MinimalMcpServer;
-  private readonly transports: Map<string, StreamableHTTPServerTransport> = new Map();
-  private readonly registeredToolNames = new Set<string>();
+  private readonly transports: Map<string, { transport: StreamableHTTPServerTransport; server: MinimalMcpServer }> = new Map();
+  private readonly externalTools: Array<{
+    name: string;
+    description: string;
+    schema: Record<string, z.ZodTypeAny>;
+    callback: (args: Record<string, unknown>) => Promise<unknown>;
+  }> = [];
 
   constructor(
     private readonly ops: VaultOperations,
     private readonly settings: LocalRestApiSettings,
-  ) {
-    this.mcpServer = new McpServer({
+  ) {}
+
+  private createMcpServer(): MinimalMcpServer {
+    const server = new McpServer({
       name: "obsidian-local-rest-api",
       version: "1.0.0",
-    });
-    this.registerResources();
-    this.registerTools();
+    }) as unknown as MinimalMcpServer;
+    this.registerResources(server);
+    this.registerTools(server);
+    for (const ext of this.externalTools) {
+      this.tool(server, ext.name, ext.description, ext.schema, async (args) =>
+        this.text(await ext.callback(args as Record<string, unknown>)),
+      );
+    }
+    return server;
   }
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  private tool(name: string, description: string, schema: any, callback: (args: any) => Promise<CallToolResult>): { remove: () => void } {
-    this.registeredToolNames.add(name);
-    return this.mcpServer.tool(name, description, schema, async (args: unknown) => {
+  private tool(server: MinimalMcpServer, name: string, description: string, schema: any, callback: (args: any) => Promise<CallToolResult>): { remove: () => void } {
+    return server.tool(name, description, schema, async (args: unknown) => {
       try {
         const result = await callback(args);
         if (this.settings.enableVerboseLogging) {
@@ -69,17 +80,10 @@ export class McpHandler {
     schema: Record<string, z.ZodTypeAny>,
     callback: (args: Record<string, unknown>) => Promise<unknown>,
   ): () => void {
-    if (this.registeredToolNames.has(name)) {
-      throw new Error(
-        `Cannot register MCP tool "${name}" — a tool with this name is already registered.`,
-      );
-    }
-    const registered = this.tool(name, description, schema, async (args) =>
-      this.text(await callback(args as Record<string, unknown>)),
-    );
+    this.externalTools.push({ name, description, schema, callback });
     return () => {
-      registered.remove();
-      this.registeredToolNames.delete(name);
+      const idx = this.externalTools.findIndex((t) => t.name === name);
+      if (idx >= 0) this.externalTools.splice(idx, 1);
     };
   }
 
@@ -94,23 +98,24 @@ export class McpHandler {
         sessionIdGenerator: () => randomUUID(),
         enableJsonResponse: true,
         onsessioninitialized: (id) => {
-          this.transports.set(id, transport);
+          this.transports.set(id, { transport, server });
         },
       });
       transport.onclose = () => {
         if (transport.sessionId) this.transports.delete(transport.sessionId);
       };
-      await this.mcpServer.connect(transport);
+      const server = this.createMcpServer();
+      await server.connect(transport);
       await transport.handleRequest(req, res, req.body);
       return;
     }
 
-    const transport = this.transports.get(sessionId);
-    if (!transport) {
+    const entry = this.transports.get(sessionId);
+    if (!entry) {
       res.status(404).json({ error: "Session not found" });
       return;
     }
-    await transport.handleRequest(req, res, req.body);
+    await entry.transport.handleRequest(req, res, req.body);
   }
 
   private text(data: unknown) {
@@ -131,8 +136,8 @@ export class McpHandler {
     return file;
   }
 
-  private registerResources(): void {
-    this.mcpServer.resource(
+  private registerResources(server: MinimalMcpServer): void {
+    server.resource(
       "openapi-spec",
       "obsidian://local-rest-api/openapi.yaml",
       {
@@ -153,7 +158,7 @@ export class McpHandler {
       }),
     );
 
-    this.mcpServer.resource(
+    server.resource(
       "graph-visualizer",
       GRAPH_VISUALIZER_URI,
       {
@@ -175,8 +180,8 @@ export class McpHandler {
     );
   }
 
-  private registerTools(): void {
-    this.tool(
+  private registerTools(server: MinimalMcpServer): void {
+    this.tool(server,
       "vault_list",
       "List files and subdirectories inside a vault directory. " +
         "Returns an array of names; directory entries end with '/'. " +
@@ -188,7 +193,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "vault_read",
       "Read a vault file's content and metadata. " +
         "Returns a JSON object with: content (full markdown text), path, " +
@@ -243,7 +248,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "vault_write",
       "Create or overwrite a vault file with the given content. " +
         "Creates any missing parent directories automatically. " +
@@ -258,7 +263,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "vault_append",
       "Append content to the end of a vault file. " +
         "Creates the file if it does not already exist.",
@@ -272,7 +277,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "vault_patch",
       "Patch a specific section of a vault file by targeting a heading, block reference, or frontmatter field.\n\n" +
         "- targetType: 'heading' targets the content beneath a markdown heading (the heading line itself is not part of the section and must not appear in the supplied content); 'block' targets a block reference (the ID after '^'); 'frontmatter' targets a YAML front-matter key.\n" +
@@ -378,7 +383,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "vault_delete",
       "Delete a file from the vault. Throws if the file does not exist.",
       { path: z.string().describe("File path relative to vault root") },
@@ -388,7 +393,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "vault_get_document_map",
       "Return the structure of a vault file as a document map: the list of heading paths, " +
         "block reference IDs, and frontmatter field names present in the file. " +
@@ -403,7 +408,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "active_file_get_path",
       "Return the vault-relative path of the file currently open in Obsidian. " +
         "Use this path with vault_read, vault_write, vault_append, vault_patch, " +
@@ -416,7 +421,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "periodic_note_get_path",
       "Return the vault-relative path of the current periodic note for the given period " +
         "(daily, weekly, monthly, quarterly, or yearly). " +
@@ -439,7 +444,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "search_query",
       "Search vault files using a JsonLogic query evaluated against each note's metadata.\n\n" +
         "The query is a JSON object following the JsonLogic spec (https://jsonlogic.com/operations.html). " +
@@ -464,7 +469,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "search_simple",
       "Search vault files using Obsidian's built-in simple search. " +
         "Returns an array of {filename, score, matches} objects sorted by relevance score. " +
@@ -482,7 +487,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "tag_list",
       "Return all tags used across the vault, each with a usage count. " +
         "Tag names do not include the leading '#'. " +
@@ -498,7 +503,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "command_list",
       "Return all registered Obsidian commands. " +
         "Each entry has an 'id' and a human-readable 'name'. " +
@@ -509,7 +514,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "command_execute",
       "Execute an Obsidian command by its ID. " +
         "Use command_list to discover available command IDs. " +
@@ -521,7 +526,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "open_file",
       "Open a file in the Obsidian UI. " +
         "If the file does not exist, Obsidian will create a new document at that path. " +
@@ -538,8 +543,7 @@ export class McpHandler {
 
     // --- Graph tools ---
 
-    this.registeredToolNames.add("graph_get");
-    this.mcpServer.registerTool(
+    server.registerTool(
       "graph_get",
       {
         title: "Vault Graph",
@@ -563,7 +567,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "graph_analyze",
       "Analyze the vault graph structure and return computed metrics: " +
         "total node/edge counts, orphan notes (no links in or out), " +
@@ -577,7 +581,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "graph_neighbors",
       "Return the local graph neighborhood of a specific note. " +
         "Returns all notes within N link-hops of the specified note, " +
@@ -594,7 +598,7 @@ export class McpHandler {
 
     // --- Link tools ---
 
-    this.tool(
+    this.tool(server,
       "link_list",
       "List all outgoing and incoming wiki-links for a note. " +
         "Each link includes target path, display text, line number, character position, " +
@@ -607,7 +611,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "link_create",
       "Insert a wiki-link into a note. Creates a [[target]] or [[target|display]] link. " +
         "Can optionally target a specific heading with [[target#heading]]. " +
@@ -637,7 +641,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "link_delete",
       "Remove a wiki-link from a note. Matches [[target]], [[target|display]], " +
         "[[target#heading]], and [[target#heading|display]] patterns. " +
@@ -653,7 +657,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "link_suggest",
       "Analyze a note's content and suggest potential wiki-links to existing notes. " +
         "Finds unlinked mentions — places where another note's name appears in the text " +
@@ -669,7 +673,7 @@ export class McpHandler {
 
     // --- Block tools ---
 
-    this.tool(
+    this.tool(server,
       "block_list",
       "List all block references (^block-id) in a file. " +
         "Returns each block's ID, content (the paragraph containing the block ref), " +
@@ -682,7 +686,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "block_create",
       "Add a block reference ID (^block-id) to a specific line in a note. " +
         "The block ID is appended to the end of the specified line. " +
@@ -698,7 +702,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "block_read",
       "Read the content of a specific block reference in a file. " +
         "Returns the block ID, its content (the full paragraph), and line number.",
@@ -711,7 +715,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "transclusion_create",
       "Insert a transclusion (embed) into a note. " +
         "Creates either ![[note#^block]] for block transclusions " +
@@ -741,7 +745,7 @@ export class McpHandler {
 
     // --- Canvas tools ---
 
-    this.tool(
+    this.tool(server,
       "canvas_list",
       "List all .canvas files in the vault. Returns an array of file paths.",
       {},
@@ -750,7 +754,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "canvas_read",
       "Read and parse a canvas file. Returns the full JSON Canvas structure " +
         "with nodes (text, file, link, group) and edges between them. " +
@@ -763,7 +767,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "canvas_create",
       "Create a new canvas file with initial nodes and edges. " +
         "The path must end with .canvas extension. " +
@@ -811,7 +815,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "canvas_add_node",
       "Add a node to an existing canvas. Node types: " +
         "'text' (with text content), 'file' (referencing a vault file), " +
@@ -842,7 +846,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "canvas_add_edge",
       "Add an edge between two nodes on a canvas. " +
         "Edges connect a fromNode to a toNode, optionally specifying sides and arrow endpoints. " +
@@ -867,7 +871,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "canvas_delete_node",
       "Remove a node from a canvas by its ID. " +
         "Also removes all edges connected to the deleted node.",
@@ -881,7 +885,7 @@ export class McpHandler {
       },
     );
 
-    this.tool(
+    this.tool(server,
       "canvas_update",
       "Replace the entire content of a canvas file with new nodes and edges. " +
         "Use this for bulk updates or restructuring a canvas.",
