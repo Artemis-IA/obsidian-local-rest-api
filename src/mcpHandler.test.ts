@@ -4,6 +4,7 @@
 
 const mockRemove = jest.fn();
 const mockTool = jest.fn().mockReturnValue({ remove: mockRemove });
+const mockRegisterTool = jest.fn().mockReturnValue({ remove: mockRemove });
 const mockConnect = jest.fn().mockResolvedValue(undefined);
 const mockTransportHandleRequest = jest.fn().mockResolvedValue(undefined);
 const mockNewSessionId = "new-session-id";
@@ -21,6 +22,7 @@ jest.mock("./vaultOperations", () => ({
 jest.mock("@modelcontextprotocol/sdk/server/mcp.js", () => ({
   McpServer: jest.fn().mockImplementation(() => ({
     tool: mockTool,
+    registerTool: mockRegisterTool,
     resource: mockResource,
     connect: mockConnect,
   })),
@@ -144,18 +146,25 @@ describe("McpHandler", () => {
 
   // ---- resource registration ----------------------------------------------
 
-  test("registers the openapi-spec resource", () => {
-    expect(mockResource).toHaveBeenCalledTimes(1);
-    const [name, uri] = mockResource.mock.calls[0] as [string, string];
-    expect(name).toBe("openapi-spec");
-    expect(uri).toBe("obsidian://local-rest-api/openapi.yaml");
+  test("registers the openapi-spec and graph-visualizer resources", () => {
+    expect(mockResource).toHaveBeenCalledTimes(2);
+    const [name0, uri0] = mockResource.mock.calls[0] as [string, string];
+    expect(name0).toBe("openapi-spec");
+    expect(uri0).toBe("obsidian://local-rest-api/openapi.yaml");
+    const [name1, uri1] = mockResource.mock.calls[1] as [string, string];
+    expect(name1).toBe("graph-visualizer");
+    expect(uri1).toBe("ui://obsidian-local-rest-api/graph-visualizer.html");
   });
 
   // ---- tool registration --------------------------------------------------
 
   test("registers all 33 tools", () => {
-    expect(mockTool).toHaveBeenCalledTimes(33);
-    const names = mockTool.mock.calls.map((c: unknown[]) => c[0]);
+    // 32 tools registered via tool() + 1 via registerTool() (graph_get with MCP App metadata)
+    expect(mockTool).toHaveBeenCalledTimes(32);
+    expect(mockRegisterTool).toHaveBeenCalledTimes(1);
+    const toolNames = mockTool.mock.calls.map((c: unknown[]) => c[0]);
+    const registerToolNames = mockRegisterTool.mock.calls.map((c: unknown[]) => c[0]);
+    const names = [...toolNames, ...registerToolNames];
     expect(names).toEqual(
       expect.arrayContaining([
         "vault_list",
@@ -193,6 +202,9 @@ describe("McpHandler", () => {
         "canvas_update",
       ]),
     );
+    // Verify graph_get has _meta.ui metadata
+    const graphGetConfig = mockRegisterTool.mock.calls[0][1] as { _meta?: Record<string, unknown> };
+    expect(graphGetConfig._meta).toEqual({ ui: { resourceUri: "ui://obsidian-local-rest-api/graph-visualizer.html" } });
   });
 
   // ---- vault_list ---------------------------------------------------------

@@ -51,6 +51,7 @@ const buildOptions = {
   outfile: "main.js",
   loader: {
     ".yaml": "text",
+    ".html": "text",
   },
 };
 

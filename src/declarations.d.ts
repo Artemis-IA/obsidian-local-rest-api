@@ -3,6 +3,11 @@ declare module "*.yaml" {
   export default content;
 }
 
+declare module "*.html" {
+  const content: string;
+  export default content;
+}
+
 declare global {
   interface Window {
     moment(inp?: moment.MomentInput, strict?: boolean): moment.Moment;

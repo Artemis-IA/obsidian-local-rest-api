@@ -9,6 +9,7 @@ import { TFile } from "obsidian";
 import { VaultOperations } from "./vaultOperations";
 import { PatchFailed, PatchOperation, PatchTargetType } from "markdown-patch";
 import openapiYaml from "../docs/openapi.yaml";
+import graphVisualizerHtml from "./apps/graph-visualizer.html";
 import { ERROR_CODE_MESSAGES } from "./constants";
 import { CanvasData, LocalRestApiSettings } from "./types";
 
@@ -18,9 +19,13 @@ const PERIODS = ["daily", "weekly", "monthly", "quarterly", "yearly"] as const;
 // McpServer class to avoid TypeScript heap OOM from evaluating ToolCallback<ZodRawShape>.
 interface MinimalMcpServer {
   tool(name: string, description: string, schema: unknown, callback: (args: unknown) => Promise<CallToolResult>): { remove: () => void };
+  registerTool(name: string, config: { title?: string; description?: string; inputSchema?: unknown; outputSchema?: unknown; annotations?: unknown; _meta?: Record<string, unknown> }, callback: (args: unknown) => Promise<CallToolResult>): { remove: () => void };
   connect(transport: StreamableHTTPServerTransport): Promise<void>;
   resource(name: string, uri: string, meta: unknown, handler: (uri: URL) => Promise<unknown>): void;
 }
+
+const GRAPH_VISUALIZER_URI = "ui://obsidian-local-rest-api/graph-visualizer.html";
+const MCP_APP_MIME_TYPE = "text/html;type=mcp-app";
 
 export class McpHandler {
   private readonly mcpServer: MinimalMcpServer;
@@ -142,6 +147,27 @@ export class McpHandler {
             uri: uri.href,
             mimeType: "application/yaml",
             text: openapiYaml,
+          },
+        ],
+      }),
+    );
+
+    this.mcpServer.resource(
+      "graph-visualizer",
+      GRAPH_VISUALIZER_URI,
+      {
+        mimeType: MCP_APP_MIME_TYPE,
+        description:
+          "Interactive force-directed graph visualization of the vault's note connections. " +
+          "Renders nodes (notes) and edges (wiki-links) with D3.js. Supports zoom, " +
+          "drag, folder filtering, orphan/hub highlighting, and tooltips.",
+      },
+      async (uri: URL) => ({
+        contents: [
+          {
+            uri: uri.href,
+            mimeType: MCP_APP_MIME_TYPE,
+            text: graphVisualizerHtml,
           },
         ],
       }),
@@ -511,16 +537,27 @@ export class McpHandler {
 
     // --- Graph tools ---
 
-    this.tool(
+    this.registeredToolNames.add("graph_get");
+    this.mcpServer.registerTool(
       "graph_get",
-      "Return the full graph structure of the vault as nodes and edges. " +
-        "Each node includes path, name, tags, link count, and backlink count. " +
-        "Each edge represents a wiki-link from source to target. " +
-        "Use the optional filter parameter to limit results to paths containing the filter string.",
       {
-        filter: z.string().optional().describe("Optional path filter string (case-insensitive substring match)"),
+        title: "Vault Graph",
+        description:
+          "Return the full graph structure of the vault as nodes and edges. " +
+          "Each node includes path, name, tags, link count, and backlink count. " +
+          "Each edge represents a wiki-link from source to target. " +
+          "Use the optional filter parameter to limit results to paths containing the filter string.",
+        inputSchema: {
+          filter: z.string().optional().describe("Optional path filter string (case-insensitive substring match)"),
+        },
+        _meta: {
+          ui: {
+            resourceUri: GRAPH_VISUALIZER_URI,
+          },
+        },
       },
-      async ({ filter }: { filter?: string }) => {
+      async (args: unknown) => {
+        const { filter } = args as { filter?: string };
         return this.text(this.ops.getGraph(filter));
       },
     );

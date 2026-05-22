@@ -21,5 +21,6 @@ module.exports = {
   transform: {
     "\\.ts$": ["ts-jest", { tsconfig: "tsconfig.test.json", diagnostics: false }],
     "\\.ya?ml$": "<rootDir>/jest-raw-transformer.js",
+    "\\.html$": "<rootDir>/jest-raw-transformer.js",
   },
 };
