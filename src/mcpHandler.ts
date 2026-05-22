@@ -91,15 +91,23 @@ export class McpHandler {
     req: express.Request,
     res: express.Response,
   ): Promise<void> {
-    // Ensure the Accept header satisfies the SDK's validation which
-    // requires both application/json and text/event-stream, even when
-    // enableJsonResponse is true and we never actually stream SSE.
-    // Clients like Windsurf's mcp-go may only send application/json.
-    const accept = req.headers["accept"] ?? "";
-    if (!accept.includes("text/event-stream")) {
-      req.headers["accept"] = accept
-        ? `${accept}, text/event-stream`
-        : "application/json, text/event-stream";
+    // The SDK's transport reads headers from rawHeaders (via @hono/node-server),
+    // which is an immutable array set at HTTP parse time — mutating req.headers
+    // does NOT propagate. We must patch rawHeaders directly so the SDK's Accept
+    // validation passes for clients that only send application/json.
+    if (!req.headers["accept"]?.includes("text/event-stream")) {
+      const idx = req.rawHeaders.findIndex(
+        (h) => h.toLowerCase() === "accept",
+      );
+      if (idx >= 0) {
+        req.rawHeaders[idx + 1] += ", text/event-stream";
+      } else {
+        req.rawHeaders.push("Accept", "application/json, text/event-stream");
+      }
+      // Keep req.headers in sync for any downstream code
+      req.headers["accept"] = req.rawHeaders[
+        req.rawHeaders.findIndex((h) => h.toLowerCase() === "accept") + 1
+      ];
     }
 
     const sessionId = req.headers["mcp-session-id"] as string | undefined;

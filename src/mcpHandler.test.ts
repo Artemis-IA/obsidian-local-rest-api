@@ -144,7 +144,8 @@ describe("McpHandler", () => {
     handler = new McpHandler(ops, DEFAULT_SETTINGS);
     // Trigger a session to register tools on a new McpServer
     const req = {
-      headers: {},
+      headers: { accept: "application/json, text/event-stream" },
+      rawHeaders: ["Accept", "application/json, text/event-stream"],
       body: { jsonrpc: "2.0", id: 1, method: "initialize", params: { protocolVersion: "2025-03-26", capabilities: {}, clientInfo: { name: "test", version: "1.0" } } },
     } as any;
     const res = { status: jest.fn().mockReturnThis(), json: jest.fn() } as any;
@@ -564,7 +565,7 @@ describe("McpHandler", () => {
       };
       // @ts-ignore: using partial mock
       await mcp.handleRequest(
-        { headers: { "mcp-session-id": "unknown" } },
+        { headers: { "mcp-session-id": "unknown" }, rawHeaders: [] },
         mockRes,
       );
       expect(mockRes.status).toHaveBeenCalledWith(404);
@@ -577,7 +578,7 @@ describe("McpHandler", () => {
       jest.clearAllMocks();
       const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
 
-      const mockReq = { headers: {}, body: { jsonrpc: "2.0", method: "initialize" } };
+      const mockReq = { headers: {}, rawHeaders: [] as string[], body: { jsonrpc: "2.0", method: "initialize" } };
       const mockRes = {};
       // @ts-ignore
       await mcp.handleRequest(mockReq, mockRes);
@@ -596,13 +597,13 @@ describe("McpHandler", () => {
       const mcp = new McpHandler(ops, DEFAULT_SETTINGS);
 
       // Initialize: POST without session ID registers the transport via onsessioninitialized
-      const initReq = { headers: {}, body: undefined };
+      const initReq = { headers: {}, rawHeaders: [] as string[], body: undefined };
       const initRes = {};
       // @ts-ignore
       await mcp.handleRequest(initReq, initRes);
 
       // Subsequent request with the assigned session ID
-      const mockReq2 = { headers: { "mcp-session-id": mockNewSessionId } };
+      const mockReq2 = { headers: { "mcp-session-id": mockNewSessionId }, rawHeaders: [] as string[] };
       const mockRes2 = {};
       // @ts-ignore
       await mcp.handleRequest(mockReq2, mockRes2);
